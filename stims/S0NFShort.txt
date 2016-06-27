@@ -1,0 +1,17 @@
+Weight	Nested	Procedure	PairType	Fan	Length	Word1	Word2	Word1_Imag	Word2_Imag	Word1_Freq	Word2_Freq	CorrResp	ProbeCode
+1			NewFoil	1	Short	CARGO	HOOD	497	558	7	7	z	10
+1			NewFoil	1	Short	ARCH	JOKE	557	483	13	22	z	10
+1			NewFoil	1	Short	EXIT	BARN	512	589	7	29	z	10
+1			NewFoil	1	Short	CHEEK	DIRT	561	547	20	43	z	10
+1			NewFoil	1	Short	BERRY	CREAM	551	557	9	20	z	10
+1			NewFoil	1	Short	TOOL	CAST	538	483	40	45	z	10
+1			NewFoil	1	Short	HIVE	GOAT	554	585	2	6	z	10
+1			NewFoil	1	Short	GIANT	WIND	562	535	23	63	z	10
+1			NewFoil	1	Short	APRON	SUIT	565	536	7	48	z	10
+1			NewFoil	1	Short	SEWER	COACH	538	560	10	24	z	10
+1			NewFoil	1	Short	DRINK	TACK	553	546	82	4	z	10
+1			NewFoil	1	Short	ZONE	SEED	432	542	11	41	z	10
+1			NewFoil	1	Short	GRAPE	TOKEN	591	416	3	10	z	10
+1			NewFoil	1	Short	DOLL	GHOST	565	552	10	11	z	10
+1			NewFoil	1	Short	NEST	SIGN	571	534	20	94	z	10
+1			NewFoil	1	Short	LOBBY	BELL	462	610	20	18	z	10
