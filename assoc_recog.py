@@ -18,7 +18,10 @@ ocl = False
 extended_visual = True
  
 if nengo_gui_on:
-    cur_path = '/Users/Jelmer/Work/nengo/summerschool2016/jelmer'
+    if sys.platform == 'darwin':
+        cur_path = '/Users/Jelmer/Work/EM/MEG_fan/models/nengo/assoc_recog'
+    else:
+        cur_path = '/share/volume0/jelmer/MEG_fan/models/nengo/assoc_recog'
 else:
     cur_path = os.path.dirname(os.path.abspath(inspect.getfile(inspect.currentframe()))) # script path
 
