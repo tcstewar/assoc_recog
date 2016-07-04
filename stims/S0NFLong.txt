@@ -1,1 +1,0 @@
-Weight	Nested	Procedure	PairType	Fan	Length	Word1	Word2	Word1_Imag	Word2_Imag	Word1_Freq	Word2_Freq	CorrResp	ProbeCode

@@ -1,10 +1,12 @@
+#nengo
 import nengo
 import nengo.spa as spa
-#import nengo_ocl
+from nengo_extras.vision import Gabor, Mask
+
+#other
 import numpy as np
 import inspect, os, sys, time, csv, random
 import matplotlib.pyplot as plt
-from nengo_extras.vision import Gabor, Mask
 import png
 import itertools
 import base64
@@ -12,11 +14,15 @@ import PIL.Image
 import cStringIO
 
 
-#### SETTINGS and VOCABS ######
+
+
+#### SETTINGS #####
+
 nengo_gui_on = __name__ == '__builtin__'
-ocl = False
-extended_visual = True
- 
+ocl = False #use openCL
+full_dims = False #use full dimensions or not
+
+#set path based on gui
 if nengo_gui_on:
     if sys.platform == 'darwin':
         cur_path = '/Users/Jelmer/Work/EM/MEG_fan/models/nengo/assoc_recog'
@@ -25,34 +31,47 @@ if nengo_gui_on:
 else:
     cur_path = os.path.dirname(os.path.abspath(inspect.getfile(inspect.currentframe()))) # script path
 
-if nengo_gui_on:
-    fullexp = False #don't change this one, breaks the interface
-else:
-    fullexp = True
+
+#set dimensions used by the model
+if full_dims:
+    D = 256 #for real words need at least 320, probably move op to 512 for full experiment
+    Dmid = 128
+    Dlow = 48
+else: #lower dims
+    D = 96
+    Dmid = 48
+    Dlow = 32
 
 
 
-#display stimuli
+#### HELPER FUNCTIONS ####
+
+
+#display stimuli in gui, works for 28x90 (two words) and 14x90 (one word)
+#t = time, x = vector of pixel values
 def display_func(t, x):
 
+    #reshape etc
     if np.size(x) > 14*90:
         input_shape = (1, 28, 90)
     else:
         input_shape = (1,14,90)
 
-    values = x.reshape(input_shape)
+    values = x.reshape(input_shape) #back to 2d
     values = values.transpose((1, 2, 0))
-    values = (values + 1) / 2 * 255.
-    values = values.astype('uint8')
+    values = (values + 1) / 2 * 255. #0-255
+    values = values.astype('uint8') #as ints
 
     if values.shape[-1] == 1:
         values = values[:, :, 0]
 
-    png = PIL.Image.fromarray(values)
+    #make png
+    png_rep = PIL.Image.fromarray(values)
     buffer = cStringIO.StringIO()
-    png.save(buffer, format="PNG")
+    png_rep.save(buffer, format="PNG")
     img_str = base64.b64encode(buffer.getvalue())
 
+    #html for nengo
     display_func._nengo_html_ = '''
            <svg width="100%%" height="100%%" viewbox="0 0 %i %i">
            <image width="100%%" height="100%%"
@@ -62,155 +81,174 @@ def display_func(t, x):
 
 
 
-
-#load default stims (want to redo this for other subjs)
+#load stimuli, subj=0 means a subset of the stims of subject 1 (no long words), works well with lower dims
 def load_stims(subj=0):
 
-    #load file
+    #pairs and words in experiment for training model
+    global target_pairs #learned word pairs
+    global target_words #learned words
+    global items #all items in exp (incl. new foils)
+
+    #stimuli for running experiment
+    global stims #stimuli in experiment
+    global target_rpfoils #target re-paired foils stimuli
+    global new_foils #new foil stimuli
+
+    #load files (targets/re-paired foils; short new foils; long new foils)
+    #ugly, but this way we can use the original stimulus files
     stims = np.genfromtxt(cur_path + '/stims/S' + str(subj) + 'Other.txt', skip_header=True,
                           dtype=[('probe', np.str_, 8), ('fan', 'int'), ('wordlen', np.str_, 8),
                                  ('item1', np.str_, 8), ('item2', np.str_, 8)], usecols=[1,2,3,4,5])
     stimsNFshort = np.genfromtxt(cur_path + '/stims/S' + str(subj) + 'NFShort.txt', skip_header=True,
                                  dtype=[('probe', np.str_, 8), ('fan', 'int'), ('wordlen', np.str_, 8),
                                         ('item1', np.str_, 8), ('item2', np.str_, 8)], usecols=[1,2,3,4,5])
-    if fullexp:
+
+
+    if not(subj == 0):
         stimsNFlong = np.genfromtxt(cur_path + '/stims/S' + str(subj) + 'NFLong.txt', skip_header=True,
                                 dtype=[('probe', np.str_, 8), ('fan', 'int'), ('wordlen', np.str_, 8),
                                        ('item1', np.str_, 8), ('item2', np.str_, 8)], usecols=[1,2,3,4,5])
 
-
     #combine
-    if fullexp:
+    if not(subj == 0):
         stims = np.hstack((stims, stimsNFshort, stimsNFlong))
     else:
         stims = np.hstack((stims, stimsNFshort))
 
     stims = stims.tolist()
-    #print stims
-    #print stims2
 
-    #get target pairs
+    #parse out different categories
     target_pairs = []
+    target_words = []
+    target_rpfoils = []
+    new_foils = []
+    items = []
+
     for i in stims:
+
+        #fill items list with all words
+        items.append(i[3])
+        items.append(i[4])
+
+        #get target pairs
         if i[0] == 'Target':
             target_pairs.append((i[3],i[4]))
+            target_words.append(i[3])
+            target_words.append(i[4])
 
-    return target_pairs, stims
+        #make separate lists for targets/rp foils and new foils (for presenting experiment)
+        if i[0] != 'NewFoil':
+            target_rpfoils.append(i)
+        else:
+            new_foils.append(i)
 
-
-
-#for real words, need at least 320
-if fullexp:
-    D = 256 #prob increase this later, increase n_neurons?
-    Dmid = 128
-    Dlow = 48
-    [pairs, stims] = load_stims(1)
-else:
-    D = 96
-    Dmid = 48
-    Dlow = 32
-    [pairs, stims] = load_stims(0)
-
-target_rpfoils = []
-new_foils = []
-for i in stims:
-    if i[0] != 'NewFoil':
-        target_rpfoils.append(i)
-    else:
-        new_foils.append(i)
+    #remove duplicates
+    items = np.unique(items).tolist()
+    target_words = np.unique(target_words).tolist()
 
 
-items = []
-for i in stims:
-    items.append(i[3])
-    items.append(i[4])
 
+#load images for vision
+def load_images():
 
-# --- load the words
-indir = cur_path + '/images/'
-files = os.listdir(indir)
-files2 = []
-for fn in files:
-    if fullexp:
-        if fn[-4:] == '.png':
-            files2.append(fn)
-    else:
+    global X_train, y_train, y_train_words
+
+    indir = cur_path + '/images/'
+    files = os.listdir(indir)
+    files2 = []
+
+    #select only images for current item set
+    for fn in files:
         if fn[-4:] == '.png' and (fn[:-4] in items):
-            files2.append(fn)
+             files2.append(fn)
 
-y_train_words = []
-X_train = np.empty(shape=(np.size(files2), 90*14),dtype='float32')
-for i,fn in enumerate(files2):
-        y_train_words.append(fn[:-4])
-        r = png.Reader(indir + fn)
-        r = r.asDirect()
-        image_2d = np.vstack(itertools.imap(np.uint8, r[2]))
-        image_2d /= 255
-        image_1d = image_2d.reshape(1,90*14)
-        X_train[i] = image_1d
-        #plt.imshow(image_1d.reshape(14,90), vmin=0, vmax=1, cmap='gray')
+    X_train = np.empty(shape=(np.size(files2), 90*14),dtype='float32') #images x pixels matrix
+    y_train_words = [] #words represented in X_train
+    for i,fn in enumerate(files2):
+            y_train_words.append(fn[:-4]) #add word
+
+            #read in image and convert to 0-1 vector
+            r = png.Reader(indir + fn)
+            r = r.asDirect()
+            image_2d = np.vstack(itertools.imap(np.uint8, r[2]))
+            image_2d /= 255
+            image_1d = image_2d.reshape(1,90*14)
+            X_train[i] = image_1d
+
+    #numeric labels for words (could present multiple different examples of words, would get same label)
+    y_train = np.asarray(range(0,len(np.unique(y_train_words))))
+    X_train = 2 * X_train - 1  # normalize to -1 to 1
 
 
-y_train = np.asarray(range(0,len(np.unique(y_train_words))))
-X_train = 2 * X_train - 1  # normalize to -1 to 1
+#returns pixels of image representing item (ie METAL)
+def get_image(item):
+    return X_train[y_train_words.index(item)]
 
 
-# load vocabs
+
+
+#### MODEL FUNCTIONS #####
+
+# performs all steps in model ini
+def initialize_model(subj=0):
+
+    load_stims(subj)
+    load_images()
+    initialize_vocabs()
+
+
+#initialize vocabs
 def initialize_vocabs():
-    #global encoders
-    global train_targets
-    global vocab_concepts
-    global vocab_goal
-    global vocab_motor
-    global vision_mapping
-    global vocab_items
-    global vocab_fingers
-    global motor_mapping
 
-    if extended_visual:
-        #low level vision
-        vocab_vision = nengo.spa.Vocabulary(Dmid,max_similarity=.5)
-        for name in y_train_words:
-            vocab_vision.parse(name)
+    global vocab_vision #low level visual vocab
+    global vocab_concepts #vocab with all concepts
+    global vocab_learned_words #vocab with learned words
+    global vocab_learned_pairs #vocab with learned pairs
+    global vocab_motor #upper motor hierarchy (LEFT, INDEX)
+    global vocab_fingers #finger activation (L1, R2)
+    global vocab_goal #goal vocab
+    global vocab_attend #attention vocab
 
-        train_targets = vocab_vision.vectors
+    global train_targets #vector targets to train X_train on
+    global vision_mapping #mapping between visual representations and concepts
+    global list_of_pairs #list of pairs in form 'METAL_SPARK'
+    global motor_mapping #mapping between higher and lower motor areas
 
 
-    #word concepts - should have all concepts, including new foils
+    #low level visual representations
+    vocab_vision = nengo.spa.Vocabulary(Dmid,max_similarity=.5)
+    for name in y_train_words:
+        vocab_vision.parse(name)
+    train_targets = vocab_vision.vectors
+
+
+    #word concepts - has all concepts, including new foils
     vocab_concepts = spa.Vocabulary(D, max_similarity=0.2)
-    if extended_visual:
-        for i in y_train_words:
-            vocab_concepts.parse(i)
-    else:
-        for i in items:
-            if i not in vocab_concepts.keys:
-                vocab_concepts.parse(i)
+    for i in y_train_words:
+        vocab_concepts.parse(i)
+    vocab_concepts.parse('ITEM1')
+    vocab_concepts.parse('ITEM2')
 
-    #vision-concept mapping
-    if extended_visual:
-        vision_mapping = np.zeros((D, Dmid))
-        for word in y_train_words:
-            vision_mapping += np.outer(vocab_vision.parse(word).v, vocab_concepts.parse(word).v).T
 
-    #experimental items
-    vocab_items = spa.Vocabulary(D, max_similarity = .2)
-    for item1, item2 in pairs:
-        vocab_items.parse(item1)
-        vocab_items.parse(item2)
+    #vision-concept mapping between vectors
+    vision_mapping = np.zeros((D, Dmid))
+    for word in y_train_words:
+        vision_mapping += np.outer(vocab_vision.parse(word).v, vocab_concepts.parse(word).v).T
 
-    print(vocab_concepts.keys )
+    #vocab with learned words
+    vocab_learned_words = vocab_concepts.create_subset(target_words)
 
-    #experimental pairs
-    global list_of_pairs
-    vocab_pairs = spa.Vocabulary(D, max_similarity = .2)
+    #vocab with learned pairs
     list_of_pairs = []
-    for item1, item2 in pairs:
-        vocab_pairs.parse('%s*ITEM1 + %s*ITEM2' % (item1, item2))
-        vocab_pairs.add('%s_%s' % (item1,item2), vocab_pairs.parse('%s*ITEM1 + %s*ITEM2' % (item1, item2)))
-        vocab_concepts.add('%s_%s' % (item1,item2), vocab_concepts.parse('%s*ITEM1 + %s*ITEM2' % (item1, item2)))
-        list_of_pairs.append('%s_%s' % (item1,item2))
+    for item1, item2 in target_pairs:
+        #vocab_learned_pairs.parse('%s*ITEM1 + %s*ITEM2' % (item1, item2)) #think this can go, but let's see
+        #vocab_learned_pairs.add('%s_%s' % (item1,item2), vocab_learned_pairs.parse('%s*ITEM1 + %s*ITEM2' % (item1, item2)))
+        vocab_concepts.add('%s_%s' % (item1,item2), vocab_concepts.parse('%s*ITEM1 + %s*ITEM2' % (item1, item2))) #add pairs to concepts to use same vectors
+        list_of_pairs.append('%s_%s' % (item1,item2)) #keep list of pairs notation
+    vocab_learned_pairs = vocab_concepts.create_subset(list_of_pairs) #get only pairs
+    #print vocab_learned_pairs.keys
 
-    #motor vocab, just for sim calcs
+    #motor vocabs, just for sim calcs
     vocab_motor = spa.Vocabulary(Dmid) #different dimension to be sure, upper motor hierarchy
     vocab_motor.parse('LEFT+RIGHT+INDEX+MIDDLE')
 
@@ -223,8 +261,6 @@ def initialize_vocabs():
     motor_mapping += np.outer(vocab_motor.parse('LEFT+MIDDLE').v, vocab_fingers.parse('L2').v).T
     motor_mapping += np.outer(vocab_motor.parse('RIGHT+INDEX').v, vocab_fingers.parse('R1').v).T
     motor_mapping += np.outer(vocab_motor.parse('RIGHT+MIDDLE').v, vocab_fingers.parse('R2').v).T
-    #mapping *= 0.5
-
 
     #goal vocab
     vocab_goal = spa.Vocabulary(Dlow)
@@ -234,152 +270,137 @@ def initialize_vocabs():
     vocab_goal.parse('END')
 
     #attend vocab
-    vocab_attend = spa.Vocabulary(D,max_similarity=.2)
-    vocab_attend.parse('ITEM1')
-    vocab_attend.parse('ITEM2')
-
-
-    # --- set up network parameters
-    if extended_visual:
-        global n_vis
-        global n_out
-        global n_hid
-        n_vis = X_train.shape[1] #nr of pixels, dimensions of network
-        n_out = train_targets.shape[1] #nr of items
-        n_hid = 1000  # nr of gabor encoders/neurons - recommendations?, one neuron per encoder
-
-    if extended_visual:
-        # random state to start
-        rng = np.random.RandomState(9)
-        global encoders
-        encoders = Gabor().generate(n_hid, (11, 11), rng=rng)  # gabor encoders, work better, 11,11 apparently, why?
-        encoders = Mask((14, 90)).populate(encoders, rng=rng,
-                                           flatten=True)  # use them on part of the image (28x28 = input image)
+    vocab_attend = vocab_concepts.create_subset(['ITEM1', 'ITEM2'])
 
 
 
-
-
-
-
-#### MODEL ####
-#model = spa.SPA()
-
-global_item1 = 'GLOBAL1'
-global_item2 = 'GLOBAL2'
-
-def get_image(item):
-    return X_train[y_train_words.index(item)]
-
-
-def present_pair(t):
-    im1 = get_image(global_item1)
-    im2 = get_image(global_item2)
-    return np.hstack((im1, im2))
-
-
-def present_item(t):
-    if t < .1:
-        return get_image(global_item1)
-    else:
-        return get_image(global_item2)
-
-
-def present_item_simple(t):
-    if t < .1:
-        return global_item1
-    else:
-        return global_item2
-
-
+#initialize model
 def create_model(trial_info=('Target', 1, 'Short', 'METAL', 'SPARK'), hand='RIGHT',seedin=1):
-#def create_model(trial_info=('Target', 1, 'Short', 'CARGO', 'HOOD'), hand='LEFT', seedin=1):
 
-    initialize_vocabs()
-    print trial_info
-
-    global global_item1
-    global global_item2
-
-    global_item1 = trial_info[3]
-    global_item2 = trial_info[4]
-
+    #print trial_info
+    print '\n\n---- NEW MODEL ----'
     global model
+
+    #word presented in current trial
+    item1 = trial_info[3]
+    item2 = trial_info[4]
+
+    #returns images of current words
+    def present_pair(t):
+        im1 = get_image(item1)
+        im2 = get_image(item2)
+        return np.hstack((im1, im2))
+
+    #returns image 1 <100 ms, otherwise image 2
+    def present_item(t):
+        if t < .1:
+            return get_image(item1)
+        else:
+            return get_image(item2)
+
+    def present_item2(t,output_attend):
+
+        similarities = [np.dot(output_attend, vocab_attend['ITEM1'].v),
+                        np.dot(output_attend, vocab_attend['ITEM2'].v)]
+        #print similarities
+
+        ret_ima = np.zeros(1260)
+        if similarities[0] > .5:
+            ret_ima = get_image(item1)
+        elif similarities[1] > .5:
+            ret_ima = get_image(item2)
+
+        return ret_ima
+
+
     model = spa.SPA(seed=seedin)
     with model:
 
-        #display current stimulus pair
+        #display current stimulus pair (not part of model)
         model.pair_input = nengo.Node(present_pair)
         model.pair_display = nengo.Node(display_func, size_in=model.pair_input.size_out)  # to show input
         nengo.Connection(model.pair_input, model.pair_display, synapse=None)
 
 
-        #visual
-        model.visual_net = nengo.Network()
-        with model.visual_net:
-            if not extended_visual:
-                model.stimulus = spa.State(D, vocab=vocab_concepts,feedback=1)
-                model.stim = spa.Input(stimulus=present_item_simple)
-            else:
-
-                #represent currently attended item
-                model.attended_item = nengo.Node(present_item)
-                model.vision_process = nengo.Ensemble(n_hid, n_vis, eval_points=X_train,
-                                                        neuron_type=nengo.LIFRate(),
-                                                        intercepts=nengo.dists.Choice([-0.5]), #can switch these off
-                                                        max_rates=nengo.dists.Choice([100]),  # why?
-                                                        encoders=encoders)
-                                                                            #  1000 neurons, nrofpix = dimensions
-                # visual_representation = nengo.Node(size_in=Dmid) #output, in this case 466 outputs
-                model.visual_representation = nengo.Ensemble(n_hid, dimensions=Dmid)  # output, in this case 466 outputs
-
-                model.visconn = nengo.Connection(model.vision_process, model.visual_representation, synapse=0.005,
-                                                eval_points=X_train, function=train_targets,
-                                                solver=nengo.solvers.LstsqL2(reg=0.01))
-                nengo.Connection(model.attended_item, model.vision_process, synapse=None)
-
-
-                # display attended item
-                model.display_node = nengo.Node(display_func, size_in=model.attended_item.size_out)  # to show input
-                nengo.Connection(model.attended_item, model.display_node, synapse=None)
-
-
-        #control
+        # control
         model.control_net = nengo.Network()
         with model.control_net:
-            model.attend = spa.State(D, vocab=vocab_concepts, feedback=.5) #if attend item, goes to concepts
-            model.goal = spa.State(D, vocab_goal, feedback=1) #current goal
+            model.attend = spa.State(D, vocab=vocab_attend, feedback=.5)  # vocab_attend
+            model.goal = spa.State(D, vocab_goal, feedback=1)  # current goal Dlow
             model.target_hand = spa.State(Dmid, vocab=vocab_motor, feedback=1)
+
+
+        ### vision ###
+
+        # set up network parameters
+        n_vis = X_train.shape[1]  # nr of pixels, dimensions of network
+        n_hid = 1000  # nr of gabor encoders/neurons
+
+        # random state to start
+        rng = np.random.RandomState(9)
+        encoders = Gabor().generate(n_hid, (11, 11), rng=rng)  # gabor encoders, 11x11 apparently, why?
+        encoders = Mask((14, 90)).populate(encoders, rng=rng,
+                                           flatten=True)  # use them on part of the image
+
+        model.visual_net = nengo.Network()
+        with model.visual_net:
+
+            #represent currently attended item
+            model.attended_item = nengo.Node(present_item)
+            #model.attended_item = nengo.Node(present_item2,size_in=model.attend.output.size_out)
+            #nengo.Connection(model.attend.output, model.attended_item)
+
+            model.vision_gabor = nengo.Ensemble(n_hid, n_vis, eval_points=X_train,
+                                                    neuron_type=nengo.LIFRate(),
+                                                    intercepts=nengo.dists.Choice([-0.5]),
+                                                    max_rates=nengo.dists.Choice([100]),
+                                                    encoders=encoders)
+
+            model.visual_representation = nengo.Ensemble(n_hid, dimensions=Dmid)
+
+            model.visconn = nengo.Connection(model.vision_gabor, model.visual_representation, synapse=0.005,
+                                            eval_points=X_train, function=train_targets,
+                                            solver=nengo.solvers.LstsqL2(reg=0.01))
+            nengo.Connection(model.attended_item, model.vision_gabor, synapse=None)
+
+            # display attended item
+            model.display_attended = nengo.Node(display_func, size_in=model.attended_item.size_out)  # to show input
+            nengo.Connection(model.attended_item, model.display_attended, synapse=None)
+
+
+
+
 
         # concepts
         model.concepts = spa.AssociativeMemory(vocab_concepts,wta_output=True,wta_inhibit_scale=1)
-        if not extended_visual:
-            nengo.Connection(model.stimulus.output, model.concepts.input)
-        else:
-            nengo.Connection(model.visual_representation, model.concepts.input, transform=vision_mapping)
+        nengo.Connection(model.visual_representation, model.concepts.input, transform=vision_mapping)
 
         # pair representation
         model.vis_pair = spa.State(D, vocab=vocab_concepts, feedback=2)
 
-        model.dm_items = spa.AssociativeMemory(vocab_items) #familiarity should be continuous over all items, so no wta
-        nengo.Connection(model.dm_items.output,model.dm_items.input,transform=.5,synapse=.01)
+        model.dm_learned_words = spa.AssociativeMemory(vocab_learned_words) #familiarity should be continuous over all items, so no wta
+        nengo.Connection(model.dm_learned_words.output,model.dm_learned_words.input,transform=.5,synapse=.01)
 
         model.familiarity = spa.State(1,feedback_synapse=.01) #no fb syn specified
-        nengo.Connection(model.dm_items.am.elem_output,model.familiarity.input, #am.element_output == all outputs, we sum
-                         transform=.8*np.ones((1,model.dm_items.am.elem_output.size_out)))
+        nengo.Connection(model.dm_learned_words.am.elem_output,model.familiarity.input, #am.element_output == all outputs, we sum
+                         transform=.8*np.ones((1,model.dm_learned_words.am.elem_output.size_out)))
 
-        model.dm_pairs = spa.AssociativeMemory(vocab_concepts, input_keys=list_of_pairs,wta_output=True)
+        model.dm_pairs = spa.AssociativeMemory(vocab_learned_pairs, input_keys=list_of_pairs,wta_output=True)
         nengo.Connection(model.dm_pairs.output,model.dm_pairs.input,transform=.5)
 
-        #this this should be a state instead:
-        model.representation = spa.AssociativeMemory(vocab_concepts,input_keys=list_of_pairs,wta_output=True)
-        nengo.Connection(model.representation.output,model.representation.input,transform=2)
-
+        #this works:
+        model.representation = spa.AssociativeMemory(vocab_learned_pairs, input_keys=list_of_pairs, wta_output=True)
+        nengo.Connection(model.representation.output, model.representation.input, transform=2)
         model.rep_filled = spa.State(1,feedback_synapse=.005) #no fb syn specified
         nengo.Connection(model.representation.am.elem_output,model.rep_filled.input, #am.element_output == all outputs, we sum
                          transform=.8*np.ones((1,model.representation.am.elem_output.size_out)),synapse=0)
 
-        #model.imaginal = spa.State(D, vocab=vocab_concepts)
+        #this doesn't:
+        #model.representation = spa.State(D,feedback=1)
+        #model.rep_filled = spa.State(1,feedback_synapse=.005) #no fb syn specified
+        #nengo.Connection(model.representation.output,model.rep_filled.input, #am.element_output == all outputs, we sum
+        #                 transform=.8*np.ones((1,model.representation.output.size_out)),synapse=0)
+
 
         # this shouldn't really be fixed I think
         model.comparison = spa.Compare(D, vocab=vocab_concepts)
@@ -416,20 +437,20 @@ def create_model(trial_info=('Target', 1, 'Short', 'METAL', 'SPARK'), hand='RIGH
 
         model.bg = spa.BasalGanglia(
             spa.Actions(
-                'dot(goal,DO_TASK)-.5 --> dm_items=vis_pair, goal=RECOG, attend=ITEM1',
-                'dot(goal,RECOG)+dot(attend,ITEM1)+familiarity-2 --> goal=RECOG2, dm_items=vis_pair, attend=ITEM2',#'vis_pair=ITEM1*concepts',
+                'dot(goal,DO_TASK)-.5 --> dm_learned_words=vis_pair, goal=RECOG, attend=ITEM1',
+                'dot(goal,RECOG)+dot(attend,ITEM1)+familiarity-2 --> goal=RECOG2, dm_learned_words=vis_pair, attend=ITEM2',#'vis_pair=ITEM1*concepts',
                 'dot(goal,RECOG)+dot(attend,ITEM1)+(1-familiarity)-2 --> goal=RECOG2, attend=ITEM2', #motor_input=1.5*target_hand+MIDDLE,
-                'dot(goal,RECOG2)+dot(attend,ITEM2)+familiarity-1.3 --> goal=RECOLLECTION,dm_pairs = 1.2*vis_pair, representation=3*dm_pairs',# vis_pair=ITEM2*concepts',
+                'dot(goal,RECOG2)+dot(attend,ITEM2)+familiarity-1.3 --> goal=RECOLLECTION,dm_pairs = 2*vis_pair, representation=3*dm_pairs',# vis_pair=ITEM2*concepts',
                 'dot(goal,RECOG2)+dot(attend,ITEM2)+(1-familiarity)-1.3 --> goal=RESPOND, motor_input=1.0*target_hand+MIDDLE',
                 'dot(goal,RECOLLECTION) - .5 --> goal=RECOLLECTION, representation=2*dm_pairs',
-                'dot(goal,RECOLLECTION) + 2*rep_filled - 1.3 --> goal=COMPARE_ITEM1, attend=ITEM1', # comparison_A=2*representation*~ITEM1,comparison_B=2*vis_pair',
-                'dot(goal,COMPARE_ITEM1) + rep_filled + comparison -1 --> goal=COMPARE_ITEM2, attend=ITEM2', # comparison_A=2*representation*~ITEM2,comparison_B=2*vis_pair',
-                'dot(goal,COMPARE_ITEM1) + rep_filled + (1-comparison) -1 --> goal=RESPOND,motor_input=1.0*target_hand+MIDDLE',
-                'dot(goal,COMPARE_ITEM2) + rep_filled + comparison - 1 --> goal=RESPOND,motor_input=1.0*target_hand+INDEX',
-                'dot(goal,COMPARE_ITEM2) + rep_filled + (1-comparison) -1 --> goal=RESPOND,motor_input=1.0*target_hand+MIDDLE',
+                'dot(goal,RECOLLECTION) + 2*rep_filled - 1.3 --> goal=COMPARE_ITEM1, attend=ITEM1, comparison_A = 2*vis_pair,comparison_B = 2*representation*~attend',
+                'dot(goal,COMPARE_ITEM1) + rep_filled + comparison -1 --> goal=COMPARE_ITEM2, attend=ITEM2, comparison_A = 2*vis_pair',#comparison_B = 2*representation*~attend',
+                'dot(goal,COMPARE_ITEM1) + rep_filled + (1-comparison) -1 --> goal=RESPOND,motor_input=1.0*target_hand+MIDDLE',#comparison_A = 2*vis_pair,comparison_B = 2*representation*~attend',
+                'dot(goal,COMPARE_ITEM2) + rep_filled + comparison - 1 --> goal=RESPOND,motor_input=1.0*target_hand+INDEX',#comparison_A = 2*vis_pair,comparison_B = 2*representation*~attend',
+                'dot(goal,COMPARE_ITEM2) + rep_filled + (1-comparison) -1 --> goal=RESPOND,motor_input=1.0*target_hand+MIDDLE',#comparison_A = 2*vis_pair,comparison_B = 2*representation*~attend',
 
-                'dot(goal,RESPOND) + comparison - 1 --> goal=RESPOND, motor_input=1.0*target_hand+INDEX',
-                'dot(goal,RESPOND) + (1-comparison) - 1 --> goal=RESPOND, motor_input=1.0*target_hand+MIDDLE',
+                'dot(goal,RESPOND) + comparison - 1 --> goal=RESPOND, motor_input=1.0*target_hand+INDEX', #comparison_A = 2*vis_pair,comparison_B = 2*representation*~attend',
+                'dot(goal,RESPOND) + (1-comparison) - 1 --> goal=RESPOND, motor_input=1.0*target_hand+MIDDLE', #comparison_A = 2*vis_pair,comparison_B = 2*representation*~attend',
 
                 # 'dot(goal,RECOLLECTION) + (1 - dot(representation,vis_pair)) - 1.3 --> goal=RESPOND, motor_input=1.0*target_hand+MIDDLE',
                 'dot(goal,RESPOND)+dot(motor,MIDDLE+INDEX)-1.0 --> goal=END',
@@ -444,7 +465,7 @@ def create_model(trial_info=('Target', 1, 'Short', 'METAL', 'SPARK'), hand='RIGH
         model.cortical = spa.Cortical( # cortical connection: shorthand for doing everything with states and connections
             spa.Actions(
               #  'motor_input = .04*target_hand',
-                #'dm_items = .8*concepts', #.5
+                #'dm_learned_words = .8*concepts', #.5
                 #'dm_pairs = 2*stimulus'
                 'vis_pair = 2*attend*concepts+concepts',
                 'comparison_A = 2*vis_pair',
@@ -454,11 +475,12 @@ def create_model(trial_info=('Target', 1, 'Short', 'METAL', 'SPARK'), hand='RIGH
 
 
         #probes
-        #model.pr_goal = nengo.Probe(model.goal.output,synapse=.01) #sample_every=.01 seconds, etc...
+        #model.pr_goal = nengo.Probe(model.goal.output,synapse=.01)
         model.pr_motor_pos = nengo.Probe(model.finger_pos.output,synapse=.01) #raw vector (dimensions x time)
         model.pr_motor = nengo.Probe(model.fingers.output,synapse=.01)
         model.pr_motor1 = nengo.Probe(model.motor.output, synapse=.01)
         #model.pr_target = nengo.Probe(model.target_hand.output, synapse=.01)
+        #model.pr_attend = nengo.Probe(model.attend.output, synapse=.01)
 
         #input
         model.input = spa.Input(goal=lambda t: 'DO_TASK' if t < 0.05 else '0',
@@ -466,6 +488,7 @@ def create_model(trial_info=('Target', 1, 'Short', 'METAL', 'SPARK'), hand='RIGH
                                 #attend=lambda t: 'ITEM1' if t < 0.1 else 'ITEM2',
                                 )
 
+        #print(sum(ens.n_neurons for ens in model.all_ensembles))
 
         #return model
         ### END MODEL
@@ -477,22 +500,23 @@ def create_model(trial_info=('Target', 1, 'Short', 'METAL', 'SPARK'), hand='RIGH
 
 results = []
 
+#save results to file
 def save_results(fname='output'):
     with open(cur_path + '/data/' + fname + '.txt', "w") as f:
         writer = csv.writer(f)
         writer.writerows(results)
 
 
+#prepare simulation
 def prepare_sim():
+
+    global sim
 
     print('\nModel preparation, ' + str(D) + ' dimensions, ' +
           str(sum(ens.n_neurons for ens in model.all_ensembles))
           + ' neurons, and ' + str(len(vocab_concepts.keys)) + ' concepts...')
-    #print(vocab_concepts.keys)
 
     start = time.clock()
-    global sim
-
 
     if ocl:
         sim = nengo_ocl.Simulator(model)
@@ -530,34 +554,16 @@ def do_trial(trial_info=('Target', 1, 'Short', 'METAL', 'SPARK'),hand='RIGHT'):
         last_motor_pos = sim.data[model.pr_motor_pos][sim.n_steps-1 ]
         position_finger = np.max(last_motor_pos)
 
-        #print('\tFinger position (time = ' + str(sim.time) + '): ' + str(round(position_finger,3)))
-        if position_finger >.68:
+        if position_finger >.68: #.68 represents key press
             break
 
+
+    # determine response
     step = sim.n_steps
-
-    '''
-    sim_motor = [np.dot(sim.data[model.pr_motor1][step - 1], vocab_motor['RIGHT'].v),
-                 np.dot(sim.data[model.pr_motor1][step - 1], vocab_motor['LEFT'].v),
-                 np.dot(sim.data[model.pr_motor1][step - 1], vocab_motor['INDEX'].v),
-                 np.dot(sim.data[model.pr_motor1][step - 1], vocab_motor['MIDDLE'].v)]
-
-    if sim_motor[0] > sim_motor[1]:
-        print '\nRight'
-    else:
-        print '\nLeft'
-    if sim_motor[2] > sim_motor[3]:
-        print 'Index'
-    else:
-        print 'Middle'
-    '''
-
-    # sims to L1, L2, R1, R2
     similarities = [np.dot(sim.data[model.pr_motor][step - 1], vocab_fingers['L1'].v),
                     np.dot(sim.data[model.pr_motor][step - 1], vocab_fingers['L2'].v),
                     np.dot(sim.data[model.pr_motor][step - 1], vocab_fingers['R1'].v),
                     np.dot(sim.data[model.pr_motor][step - 1], vocab_fingers['R2'].v)]
-    # print similarities
     resp = np.argmax(similarities)
     if resp == 0:
         print '\nLeft Index'
@@ -589,13 +595,10 @@ def do_trial(trial_info=('Target', 1, 'Short', 'METAL', 'SPARK'),hand='RIGHT'):
 
 def do_1_trial(trial_info=('Target', 1, 'Short', 'METAL', 'SPARK'),hand='RIGHT'):
 
-    global results
     total_sim_time = 0
-
     results = []
 
     start = time.clock()
-
     create_model(trial_info,hand)
     prepare_sim()
     do_trial(trial_info,hand)
@@ -603,26 +606,18 @@ def do_1_trial(trial_info=('Target', 1, 'Short', 'METAL', 'SPARK'),hand='RIGHT')
     print('\nTotal time: ' + str(round(time.clock() - start,2)) + ' seconds for ' + str(total_sim_time) + ' seconds simulation.')
     sim.close()
 
-    # save behavioral data
     print('\n')
     print(results)
-
-    # data_motor_raw = sim.data[model.pr_motor]
-    # data_motor = np.dot(data_motor_raw, model.get_output_vocab('motor'))
-
-
 
 
 
 def do_4_trials():
-    # type: () -> object
+
     global results
-    global sim
-    global model
+    total_sim_time = 0
     results = []
 
     start = time.clock()
-    total_sim_time = 0
 
     stims_in = []
     for i in [0,33, 32,1]:
@@ -637,27 +632,20 @@ def do_4_trials():
         prepare_sim()
         do_trial(cur_trial, cur_hand)
         sim.close()
-        del(model)
-        del(sim)
 
     print(
     '\nTotal time: ' + str(round(time.clock() - start, 2)) + ' seconds for ' + str(total_sim_time) + ' seconds simulation.')
 
-    # data_motor_raw = sim.data[model.pr_motor]
-    # data_motor = np.dot(data_motor_raw, model.get_output_vocab('motor'))
-
     # save behavioral data
     print('\n')
+    print results
     save_results()
 
 
 
-#target_rpfoils = []
-#new_foils = []
 
+def do_1_block(cur_hand='RIGHT'):
 
-
-def do_block(cur_hand='RIGHT'):
     global results
     results = []
     total_sim_time = 0
@@ -683,8 +671,6 @@ def do_block(cur_hand='RIGHT'):
     print(
     '\nTotal time: ' + str(round(time.clock() - start, 2)) + ' seconds for ' + str(total_sim_time) + ' seconds simulation.')
 
-    # data_motor_raw = sim.data[model.pr_motor]
-    # data_motor = np.dot(data_motor_raw, model.get_output_vocab('motor'))
 
     # save behavioral data
     print('\n')
@@ -695,15 +681,23 @@ def do_block(cur_hand='RIGHT'):
 #choice of trial, etc
 if not nengo_gui_on:
     print 'nengo gui not on'
-    #do_1_trial(trial_info=('NewFoil', 1, 'Short', 'CARGO', 'HOOD'),hand='LEFT')
-    do_4_trials()
 
-    #do_block('RIGHT')
-    #do_block('LEFT')
+    full_dims = False
+    initialize_model(subj=0)
+
+
+    #do_1_trial(trial_info=('Target', 1, 'Short', 'METAL', 'SPARK'), hand='RIGHT')
+    #do_1_trial(trial_info=('NewFoil', 1, 'Short', 'CARGO', 'HOOD'),hand='LEFT')
+    #do_1_trial(trial_info=('RPFoil', 1,	'Short', 'SODA', 'BRAIN'), hand='RIGHT')
+
+    do_4_trials()
+    #do_1_block('RIGHT')
+    #do_1_block('LEFT')
 else:
+
     print 'nengo gui on'
-    initialize_vocabs()
+    initialize_model(subj=0)
     create_model()
-    print(sum(ens.n_neurons for ens in model.all_ensembles))
+
 
 
