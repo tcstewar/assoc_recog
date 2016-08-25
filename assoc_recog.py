@@ -91,8 +91,8 @@ def load_stims(subj=0):
 
     #stimuli for running experiment
     global stims #stimuli in experiment
-    global target_rpfoils #target re-paired foils stimuli
-    global new_foils #new foil stimuli
+    global stims_target_rpfoils #target re-paired foils stimuli
+    global stims_new_foils #new foil stimuli
 
     #load files (targets/re-paired foils; short new foils; long new foils)
     #ugly, but this way we can use the original stimulus files
@@ -120,35 +120,35 @@ def load_stims(subj=0):
     #parse out different categories
     target_pairs = []
     target_words = []
-    target_rpfoils = []
-    new_foils = []
+    stims_target_rpfoils = []
+    stims_new_foils = []
     items = []
 
     for i in stims:
 
-        #fill items list with all words
+        # fill items list with all words
         items.append(i[3])
         items.append(i[4])
 
-        #get target pairs
+        # get target pairs
         if i[0] == 'Target':
             target_pairs.append((i[3],i[4]))
             target_words.append(i[3])
             target_words.append(i[4])
 
-        #make separate lists for targets/rp foils and new foils (for presenting experiment)
+        # make separate lists for targets/rp foils and new foils (for presenting experiment)
         if i[0] != 'NewFoil':
-            target_rpfoils.append(i)
+            stims_target_rpfoils.append(i)
         else:
-            new_foils.append(i)
+            stims_new_foils.append(i)
 
-    #remove duplicates
+    # remove duplicates
     items = np.unique(items).tolist()
     target_words = np.unique(target_words).tolist()
 
 
 
-#load images for vision
+# load images for vision
 def load_images():
 
     global X_train, y_train, y_train_words
@@ -532,6 +532,8 @@ total_sim_time = 0
 def do_trial(trial_info=('Target', 1, 'Short', 'METAL', 'SPARK'),hand='RIGHT'):
 
     global total_sim_time
+    global results
+
     print('\nStart trial: ' + trial_info[0] + ', Fan ' + str(trial_info[1])
           + ', ' + trial_info[2] + ' - ' + ' '.join(trial_info[3:]) + ' - ' + hand + '\n')
 
@@ -595,6 +597,8 @@ def do_trial(trial_info=('Target', 1, 'Short', 'METAL', 'SPARK'),hand='RIGHT'):
 
 def do_1_trial(trial_info=('Target', 1, 'Short', 'METAL', 'SPARK'),hand='RIGHT'):
 
+    global total_sim_time
+    global results
     total_sim_time = 0
     results = []
 
@@ -651,12 +655,12 @@ def do_1_block(cur_hand='RIGHT'):
     total_sim_time = 0
     start = time.clock()
 
-    stims_in = target_rpfoils
-    nr_trp = len(target_rpfoils)
+    stims_in = stims_target_rpfoils
+    nr_trp = len(stims_target_rpfoils)
     nr_nf = nr_trp / 4
 
     #add new foils
-    stims_in = stims_in + random.sample(new_foils, nr_nf)
+    stims_in = stims_in + random.sample(stims_new_foils, nr_nf)
 
     #shuffle
     random.shuffle(stims_in)
@@ -686,13 +690,14 @@ if not nengo_gui_on:
     initialize_model(subj=0)
 
 
-    #do_1_trial(trial_info=('Target', 1, 'Short', 'METAL', 'SPARK'), hand='RIGHT')
+    do_1_trial(trial_info=('Target', 1, 'Short', 'METAL', 'SPARK'), hand='RIGHT')
     #do_1_trial(trial_info=('NewFoil', 1, 'Short', 'CARGO', 'HOOD'),hand='LEFT')
     #do_1_trial(trial_info=('RPFoil', 1,	'Short', 'SODA', 'BRAIN'), hand='RIGHT')
 
-    do_4_trials()
+    #do_4_trials()
     #do_1_block('RIGHT')
     #do_1_block('LEFT')
+
 else:
 
     print 'nengo gui on'
