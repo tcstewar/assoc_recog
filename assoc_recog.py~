@@ -15,6 +15,23 @@ import cStringIO
 
 
 
+#set path based on gui
+if nengo_gui_on:
+    if sys.platform == 'darwin':
+        cur_path = '/Users/Jelmer/Work/EM/MEG_fan/models/nengo/assoc_recog'
+    else:
+        cur_path = '/share/volume0/jelmer/MEG_fan/models/nengo/assoc_recog'
+else:
+    cur_path = os.path.dirname(os.path.abspath(inspect.getfile(inspect.currentframe()))) # script path
+
+
+if sys.platform == 'darwin':
+    os.environ["PYOPENCL_CTX"] = "0:1"
+else:
+    os.environ["PYOPENCL_CTX"] = "0"
+	
+
+
 
 #### SETTINGS #####
 
