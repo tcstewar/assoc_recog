@@ -36,8 +36,8 @@ with nengo.Network() as model:
     probe_b = nengo.Probe(b, synapse=0.01)
 
 # build and run the model
-#with nengo_ocl.Simulator(model) as sim:
-with nengo.Simulator(model) as sim:
+with nengo_ocl.Simulator(model) as sim:
+#with nengo.Simulator(model) as sim:
     sim.run(10)
 
 # plot the results

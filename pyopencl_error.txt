@@ -1,0 +1,56 @@
+[jelmer@compute-0-261 assoc_recog]$ python assoc_recog.py
+nengo gui not on
+
+
+---- NEW MODEL ----
+
+Model preparation, 96 dimensions, 224130 neurons, and 74 concepts...
+/home/jelmer/local/lib/python2.7/site-packages/nengo_ocl-1.0.0-py2.7.egg/nengo_ocl/simulator.py:291: UserWarning: This version of `nengo_ocl` has not been tested with your `nengo` version (2.1.1.dev0). The latest fully supported version is 2.1.0
+  nengo.__version__, latest_nengo_version))
+No context argument was provided to nengo_ocl.Simulator
+Calling pyopencl.create_some_context() for you now:
+Traceback (most recent call last):
+  File "assoc_recog.py", line 705, in <module>
+    do_1_trial(trial_info=('Target', 1, 'Short', 'METAL', 'SPARK'), hand='RIGHT')
+  File "assoc_recog.py", line 619, in do_1_trial
+    prepare_sim()
+  File "assoc_recog.py", line 534, in prepare_sim
+    sim = nengo_ocl.Simulator(model,context=ctx,profiling=True)
+  File "/home/jelmer/local/lib/python2.7/site-packages/nengo_ocl-1.0.0-py2.7.egg/nengo_ocl/simulator.py", line 321, in __init__
+    self.model.build(network)
+  File "/home/jelmer/nengo/nengo/builder/builder.py", line 119, in build
+    return Builder.build(self, obj, *args, **kwargs)
+  File "/home/jelmer/nengo/nengo/builder/builder.py", line 211, in build
+    return cls.builders[obj_cls](model, obj, *args, **kwargs)
+  File "/home/jelmer/nengo/nengo/builder/network.py", line 72, in build_network
+    model.build(subnetwork)
+  File "/home/jelmer/nengo/nengo/builder/builder.py", line 119, in build
+    return Builder.build(self, obj, *args, **kwargs)
+  File "/home/jelmer/nengo/nengo/builder/builder.py", line 211, in build
+    return cls.builders[obj_cls](model, obj, *args, **kwargs)
+  File "/home/jelmer/nengo/nengo/builder/network.py", line 72, in build_network
+    model.build(subnetwork)
+  File "/home/jelmer/nengo/nengo/builder/builder.py", line 119, in build
+    return Builder.build(self, obj, *args, **kwargs)
+  File "/home/jelmer/nengo/nengo/builder/builder.py", line 211, in build
+    return cls.builders[obj_cls](model, obj, *args, **kwargs)
+  File "/home/jelmer/nengo/nengo/builder/network.py", line 72, in build_network
+    model.build(subnetwork)
+  File "/home/jelmer/nengo/nengo/builder/builder.py", line 119, in build
+    return Builder.build(self, obj, *args, **kwargs)
+  File "/home/jelmer/nengo/nengo/builder/builder.py", line 211, in build
+    return cls.builders[obj_cls](model, obj, *args, **kwargs)
+  File "/home/jelmer/nengo/nengo/builder/network.py", line 84, in build_network
+    model.build(conn)
+  File "/home/jelmer/nengo/nengo/builder/builder.py", line 119, in build
+    return Builder.build(self, obj, *args, **kwargs)
+  File "/home/jelmer/nengo/nengo/builder/builder.py", line 211, in build
+    return cls.builders[obj_cls](model, obj, *args, **kwargs)
+  File "/home/jelmer/nengo/nengo/builder/connection.py", line 246, in build_connection
+    model, conn, rng, transform)
+  File "/home/jelmer/nengo/nengo/builder/connection.py", line 117, in build_decoders
+    rng=rng, E=E)
+  File "/home/jelmer/nengo/nengo/cache.py", line 390, in cached_solver
+    self._index[key] = (fd.name, start, end)
+TypeError: 'NoneType' object does not support item assignment
+
