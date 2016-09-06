@@ -7,15 +7,18 @@ from nengo_extras.vision import Gabor, Mask
 import numpy as np
 import inspect, os, sys, time, csv, random
 import matplotlib.pyplot as plt
-import png
+import png ##pypng
 import itertools
 import base64
 import PIL.Image
 import cStringIO
+import socket
 
 #open cl settings
 if sys.platform == 'darwin':
     os.environ["PYOPENCL_CTX"] = "0:1"
+elif socket.gethostname() == 'ai17864':
+	print('ai comp')
 else:
     os.environ["PYOPENCL_CTX"] = "0"
 	
@@ -25,17 +28,23 @@ else:
 
 nengo_gui_on = __name__ == '__builtin__'
 ocl = True #use openCL
-full_dims = False #use full dimensions or not
+full_dims = True #use full dimensions or not
 
 if ocl:
-    import pyopencl
-    import nengo_ocl
-    ctx = pyopencl.create_some_context()
+	print('openCL ON')
+	import pyopencl
+	import nengo_ocl
+	ctx = pyopencl.create_some_context()
+else:
+	print('openCL OFF')
+
 
 #set path based on gui
 if nengo_gui_on:
     if sys.platform == 'darwin':
         cur_path = '/Users/Jelmer/Work/EM/MEG_fan/models/nengo/assoc_recog'
+    elif socket.gethostname() == 'ai17864':
+    	cur_path = '/home/p234584/assoc_recog'
     else:
         cur_path = '/share/volume0/jelmer/MEG_fan/models/nengo/assoc_recog'
 else:

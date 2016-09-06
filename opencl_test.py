@@ -3,6 +3,7 @@ import matplotlib.pyplot as plt
 import nengo
 import nengo_ocl
 import os, inspect, sys
+import socket
 
 ocl = True #use openCL
 nengo_gui_on = __name__ == '__builtin__'
@@ -12,17 +13,24 @@ nengo_gui_on = __name__ == '__builtin__'
 if nengo_gui_on:
     if sys.platform == 'darwin':
         cur_path = '/Users/Jelmer/Work/EM/MEG_fan/models/nengo/assoc_recog'
+    elif socket.gethostname() == 'ai17864':
+    	cur_path = '/home/p234584/assoc_recog'
     else:
         cur_path = '/share/volume0/jelmer/MEG_fan/models/nengo/assoc_recog'
 else:
     cur_path = os.path.dirname(os.path.abspath(inspect.getfile(inspect.currentframe()))) # script path
 
 
+
+#open cl settings
 if sys.platform == 'darwin':
     os.environ["PYOPENCL_CTX"] = "0:1"
+elif socket.gethostname() == 'ai17864':
+	print('ai comp')
 else:
     os.environ["PYOPENCL_CTX"] = "0"
 	
+
 
 # define the model
 with nengo.Network() as model:
