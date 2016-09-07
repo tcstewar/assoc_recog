@@ -27,8 +27,8 @@ else:
 #### SETTINGS #####
 
 nengo_gui_on = __name__ == '__builtin__'
-ocl = True #use openCL
-full_dims = True #use full dimensions or not
+ocl = False #use openCL
+full_dims = False #use full dimensions or not
 
 if ocl:
 	print('openCL ON')
