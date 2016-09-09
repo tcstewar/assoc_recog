@@ -13,6 +13,7 @@ import base64
 import PIL.Image
 import cStringIO
 import socket
+import warnings
 
 #open cl settings
 if sys.platform == 'darwin':
@@ -27,20 +28,24 @@ else:
 #### SETTINGS #####
 
 nengo_gui_on = __name__ == '__builtin__'
-ocl = False #use openCL
-full_dims = False #use full dimensions or not
+ocl = True #use openCL
+high_dims = False #use full dimensions or not
+verbose = True
+
+print('\nSettings:')
 
 if ocl:
-	print('openCL ON')
+	print('\tOpenCL ON')
 	import pyopencl
 	import nengo_ocl
 	ctx = pyopencl.create_some_context()
 else:
-	print('openCL OFF')
+	print('\tOpenCL OFF')
 
 
 #set path based on gui
 if nengo_gui_on:
+    print('\tNengo GUI ON')
     if sys.platform == 'darwin':
         cur_path = '/Users/Jelmer/Work/EM/MEG_fan/models/nengo/assoc_recog'
     elif socket.gethostname() == 'ai17864':
@@ -48,19 +53,23 @@ if nengo_gui_on:
     else:
         cur_path = '/share/volume0/jelmer/MEG_fan/models/nengo/assoc_recog'
 else:
+    print('\tNengo GUI OFF')
     cur_path = os.path.dirname(os.path.abspath(inspect.getfile(inspect.currentframe()))) # script path
 
 
 #set dimensions used by the model
-if full_dims:
+if high_dims:
     D = 256 #for real words need at least 320, probably move op to 512 for full experiment
     Dmid = 128
     Dlow = 48
+    print('\tFull dimensions: D = ' + str(D) + ', Dmid = ' + str(Dmid) + ', Dlow = ' + str(Dlow))
 else: #lower dims
     D = 96
     Dmid = 48
     Dlow = 32
+    print('\tLow dimensions: D = ' + str(D) + ', Dmid = ' + str(Dmid) + ', Dlow = ' + str(Dlow))
 
+print('')
 
 
 #### HELPER FUNCTIONS ####
@@ -211,6 +220,10 @@ def get_image(item):
 # performs all steps in model ini
 def initialize_model(subj=0):
 
+    #warn when loading full stim set with low dimensions:
+    if subj > 0 and not(high_dims):
+        warn = warnings.warn('Initializing model with full stimulus set, but using low dimensions for vocabs.')
+
     load_stims(subj)
     load_images()
     initialize_vocabs()
@@ -218,6 +231,8 @@ def initialize_model(subj=0):
 
 #initialize vocabs
 def initialize_vocabs():
+
+    print '---- INITIALIZING VOCABS ----'
 
     global vocab_vision #low level visual vocab
     global vocab_concepts #vocab with all concepts
@@ -294,46 +309,58 @@ def initialize_vocabs():
 
 
 
+# word presented in current trial
+global cur_item1
+global cur_item2
+global cur_hand
+cur_item1 = 'METAL' #just for ini
+cur_item2 = 'SPARK'
+cur_hand = 'LEFT'
+
+# returns images of current words for display
+def present_pair(t):
+    im1 = get_image(cur_item1)
+    im2 = get_image(cur_item2)
+    return np.hstack((im1, im2))
+
+# returns image 1 <100 ms, otherwise image 2
+def present_item(t):
+    if t < .1:
+        #print(cur_item1)
+        return get_image(cur_item1)
+    else:
+        #print(cur_item2)
+        return get_image(cur_item2)
+
+
+def present_item2(t, output_attend):
+    similarities = [np.dot(output_attend, vocab_attend['ITEM1'].v),
+                    np.dot(output_attend, vocab_attend['ITEM2'].v)]
+    # print similarities
+
+    ret_ima = np.zeros(1260)
+    if similarities[0] > .5:
+        ret_ima = get_image(cur_item1)
+    elif similarities[1] > .5:
+        ret_ima = get_image(cur_item2)
+
+    return ret_ima
+
+#get vector representing hand
+def get_hand(t):
+    #print(cur_hand)
+    return vocab_motor.vectors[vocab_motor.keys.index(cur_hand)]
+
+
+
 #initialize model
-def create_model(trial_info=('Target', 1, 'Short', 'METAL', 'SPARK'), hand='RIGHT',seedin=1):
+def create_model():
 
     #print trial_info
-    print '\n\n---- NEW MODEL ----'
+    print '---- INTIALIZING MODEL ----'
     global model
 
-    #word presented in current trial
-    item1 = trial_info[3]
-    item2 = trial_info[4]
-
-    #returns images of current words
-    def present_pair(t):
-        im1 = get_image(item1)
-        im2 = get_image(item2)
-        return np.hstack((im1, im2))
-
-    #returns image 1 <100 ms, otherwise image 2
-    def present_item(t):
-        if t < .1:
-            return get_image(item1)
-        else:
-            return get_image(item2)
-
-    def present_item2(t,output_attend):
-
-        similarities = [np.dot(output_attend, vocab_attend['ITEM1'].v),
-                        np.dot(output_attend, vocab_attend['ITEM2'].v)]
-        #print similarities
-
-        ret_ima = np.zeros(1260)
-        if similarities[0] > .5:
-            ret_ima = get_image(item1)
-        elif similarities[1] > .5:
-            ret_ima = get_image(item2)
-
-        return ret_ima
-
-
-    model = spa.SPA(seed=seedin)
+    model = spa.SPA()
     with model:
 
         #display current stimulus pair (not part of model)
@@ -346,9 +373,13 @@ def create_model(trial_info=('Target', 1, 'Short', 'METAL', 'SPARK'), hand='RIGH
         # control
         model.control_net = nengo.Network()
         with model.control_net:
+            #assuming the model knows which hand to use (which was blocked)
+            model.hand_input = nengo.Node(get_hand)
+            model.target_hand = spa.State(Dmid, vocab=vocab_motor, feedback=1)
+            nengo.Connection(model.hand_input,model.target_hand.input,synapse=None)
+
             model.attend = spa.State(D, vocab=vocab_attend, feedback=.5)  # vocab_attend
             model.goal = spa.State(D, vocab_goal, feedback=1)  # current goal Dlow
-            model.target_hand = spa.State(Dmid, vocab=vocab_motor, feedback=1)
 
 
         ### vision ###
@@ -481,6 +512,16 @@ def create_model(trial_info=('Target', 1, 'Short', 'METAL', 'SPARK'), hand='RIGH
                 #possible to match complete buffer, ie is representation filled?
 
             ))
+
+        #actions = spa.Actions(
+         #   first_action='dot(memory, A) --> memory=B',
+          #  second_action='dot(memory, B) --> memory=C',
+           # something_else='dot(memory, C) --> memory=D',
+            #other_thing='dot(memory, D) --> memory=E',
+            #stuff='dot(memory, E) --> memory=A',
+        #)
+
+
         model.thalamus = spa.Thalamus(model.bg)
 
         model.cortical = spa.Cortical( # cortical connection: shorthand for doing everything with states and connections
@@ -505,8 +546,6 @@ def create_model(trial_info=('Target', 1, 'Short', 'METAL', 'SPARK'), hand='RIGH
 
         #input
         model.input = spa.Input(goal=lambda t: 'DO_TASK' if t < 0.05 else '0',
-                                target_hand=hand,
-                                #attend=lambda t: 'ITEM1' if t < 0.1 else 'ITEM2',
                                 )
 
         #print(sum(ens.n_neurons for ens in model.all_ensembles))
@@ -529,39 +568,49 @@ def save_results(fname='output'):
 
 
 #prepare simulation
-def prepare_sim():
+def prepare_sim(seed=None):
+
+    print '---- BUILDING SIMULATOR ----'
 
     global sim
 
-    print('\nModel preparation, ' + str(D) + ' dimensions, ' +
-          str(sum(ens.n_neurons for ens in model.all_ensembles))
-          + ' neurons, and ' + str(len(vocab_concepts.keys)) + ' concepts...')
+    print('\t' + str(sum(ens.n_neurons for ens in model.all_ensembles)) + ' neurons')
+    print('\t' + str(len(vocab_concepts.keys)) + ' concepts')
 
-    start = time.clock()
+    start = time.time()
 
     if ocl:
-        sim = nengo_ocl.Simulator(model,context=ctx,profiling=True)
+        sim = nengo_ocl.Simulator(model,context=ctx)
     else:
         sim = nengo.Simulator(model)
-    print('\t\t\t...finished in ' + str(round(time.clock() - start,2)) + ' seconds.\n')
+    print('\n ---- DONE in ' + str(round(time.time() - start,2)) + ' seconds ----\n')
 
 
 
-#trial_info = target/foil, fan, word length, item 1, item 2
 total_sim_time = 0
 
-def do_trial(trial_info=('Target', 1, 'Short', 'METAL', 'SPARK'),hand='RIGHT'):
+#called by all functions to do a single trial
+def do_trial(trial_info, hand):
 
     global total_sim_time
     global results
+    global cur_item1
+    global cur_item2
+    global cur_hand
 
-    print('\nStart trial: ' + trial_info[0] + ', Fan ' + str(trial_info[1])
-          + ', ' + trial_info[2] + ' - ' + ' '.join(trial_info[3:]) + ' - ' + hand + '\n')
+    cur_item1 = trial_info[3]
+    cur_item2 = trial_info[4]
+    cur_hand = hand
+
+    if verbose:
+        print('\n\n---- Trial: ' + trial_info[0] + ', Fan ' + str(trial_info[1])
+          + ', ' + trial_info[2] + ' - ' + ' '.join(trial_info[3:]) + ' - ' + hand + ' ----\n')
 
     #run sim at least 100 ms
-    sim.run(.1) #make this shorter than fastest RT
+    sim.run(.1,progress_bar=verbose) #make this shorter than fastest RT
 
-    print('Stepped sim started...\n')
+    if verbose:
+        print('Stepped sim started...')
 
     stepsize = 5 #ms
     resp = -1
@@ -578,6 +627,8 @@ def do_trial(trial_info=('Target', 1, 'Short', 'METAL', 'SPARK'),hand='RIGHT'):
         position_finger = np.max(last_motor_pos)
 
         if position_finger >.68: #.68 represents key press
+            if verbose:
+                print('... and done!\n')
             break
 
 
@@ -588,61 +639,70 @@ def do_trial(trial_info=('Target', 1, 'Short', 'METAL', 'SPARK'),hand='RIGHT'):
                     np.dot(sim.data[model.pr_motor][step - 1], vocab_fingers['R1'].v),
                     np.dot(sim.data[model.pr_motor][step - 1], vocab_fingers['R2'].v)]
     resp = np.argmax(similarities)
-    if resp == 0:
-        print '\nLeft Index'
-    elif resp == 1:
-        print '\nLeft Middle'
-    elif resp == 2:
-        print '\nRight Index'
-    elif resp == 3:
-        print '\nRight Middle'
-    if resp == -1:
-        print '\nNo response'
-    print('\n... and done!')
+
+    if verbose:
+        if resp == 0:
+            print 'Left Index'
+        elif resp == 1:
+            print 'Left Middle'
+        elif resp == 2:
+            print 'Right Index'
+        elif resp == 3:
+            print 'Right Middle'
+        if resp == -1:
+            print 'No response'
 
 
     #resp 0 = left index, 1 = left middle, 2 = right index, 3 = right middle
     #change coding later
-    if (trial_info[0] == 'Target' or trial_info[0] == 'RPFoil') and ((resp == 0 and hand == 'LEFT') or (resp == 2 and hand == 'RIGHT')):
-        acc = 1
-    elif (trial_info[0] == 'NewFoil') and ((resp == 1 and hand == 'LEFT') or (resp == 3 and hand == 'RIGHT')):
-        acc = 1
-    else:
-        acc = 0
+    acc = 0 #default 0
+    if trial_info[0] == 'Target':
+        if (resp == 0 and hand == 'LEFT')  or (resp == 2 and hand == 'RIGHT'):
+            acc = 1
+    else: #re-paired foil or new foil
+        if (resp == 1 and hand == 'LEFT') or (resp == 3 and hand == 'RIGHT'):
+            acc = 1
 
-    print('\nRT = ' + str(sim.time) + ', acc = ' + str(acc))
+    if verbose:
+        print('RT = ' + str(sim.time) + ', acc = ' + str(acc))
     total_sim_time += sim.time
     results.append(trial_info + (hand, np.round(sim.time,3), acc, resp))
 
 
-
-def do_1_trial(trial_info=('Target', 1, 'Short', 'METAL', 'SPARK'),hand='RIGHT'):
+def do_1_trial(trial_info=('Target', 1, 'Short', 'METAL', 'SPARK'),hand='RIGHT',subj=0):
 
     global total_sim_time
     global results
     total_sim_time = 0
     results = []
 
-    start = time.clock()
-    create_model(trial_info,hand)
+    start = time.time()
+
+    initialize_model(subj=subj)
+    create_model()
     prepare_sim()
+
     do_trial(trial_info,hand)
 
-    print('\nTotal time: ' + str(round(time.clock() - start,2)) + ' seconds for ' + str(total_sim_time) + ' seconds simulation.')
+    print('\nTotal time: ' + str(round(time.time() - start,2)) + ' seconds for ' + str(round(total_sim_time,2)) + ' seconds simulation.\n')
     sim.close()
 
-    print('\n')
     print(results)
+    print('\n')
 
 
+def do_4_trials(subj=0):
 
-def do_4_trials():
-
+    global total_sim_time
     global results
     total_sim_time = 0
     results = []
 
-    start = time.clock()
+    start = time.time()
+
+    initialize_model(subj=subj)
+    create_model()
+    prepare_sim()
 
     stims_in = []
     for i in [0,33, 32,1]:
@@ -651,30 +711,31 @@ def do_4_trials():
     hands_in = ['RIGHT','LEFT','RIGHT','LEFT']
 
     for i in range(4):
-        cur_trial = stims_in[i]
-        cur_hand = hands_in[i]
-        create_model(cur_trial, cur_hand)
-        prepare_sim()
-        do_trial(cur_trial, cur_hand)
-        sim.close()
+        sim.reset() #reset simulator
+        do_trial(stims_in[i], hands_in[i])
 
     print(
-    '\nTotal time: ' + str(round(time.clock() - start, 2)) + ' seconds for ' + str(total_sim_time) + ' seconds simulation.')
+    '\nTotal time: ' + str(round(time.time() - start, 2)) + ' seconds for ' + str(round(total_sim_time,2)) + ' seconds simulation.\n')
+
+    sim.close()
 
     # save behavioral data
-    print('\n')
-    print results
     save_results()
 
 
 
+def do_1_block(block_hand='RIGHT', subj=0):
 
-def do_1_block(cur_hand='RIGHT'):
-
+    global total_sim_time
     global results
-    results = []
     total_sim_time = 0
-    start = time.clock()
+    results = []
+
+    start = time.time()
+
+    initialize_model(subj=subj)
+    create_model()
+    prepare_sim()
 
     stims_in = stims_target_rpfoils
     nr_trp = len(stims_target_rpfoils)
@@ -687,41 +748,111 @@ def do_1_block(cur_hand='RIGHT'):
     random.shuffle(stims_in)
 
     for i in stims_in:
-        cur_trial = i
-        create_model(cur_trial, cur_hand)
-        prepare_sim()
-        do_trial(cur_trial, cur_hand)
-        sim.close()
+        sim.reset()
+        do_trial(i, block_hand)
+
 
     print(
-    '\nTotal time: ' + str(round(time.clock() - start, 2)) + ' seconds for ' + str(total_sim_time) + ' seconds simulation.')
+    '\nTotal time: ' + str(round(time.time() - start, 2)) + ' seconds for ' + str(round(total_sim_time,2)) + ' seconds simulation.\n')
 
+    sim.close()
 
     # save behavioral data
-    print('\n')
-    save_results('output' + '_' + cur_hand + '.txt')
+    save_results('output' + '_' + cur_hand)
+
+
+def do_experiment(subj=1):
+
+    print('===== RUNNING FULL EXPERIMENT =====')
+
+    #mix of MEG and EEG experiment
+    #14 blocks (7 left, 7 right)
+    #64 targets/rp-foils per block + 16 new foils (EEG)
+    #total number new foils = 14*16=224. We only have 208, but we can repeat some.
+    global verbose
+    verbose = False
+    global total_sim_time
+    global results
+    total_sim_time = 0
+    results = []
+
+    start = time.time()
+
+    initialize_model(subj=subj)
+    create_model()
+    prepare_sim()
+
+    #split nf in long and short
+    nf_short = list()
+    nf_long = list()
+    for stim in stims_new_foils:
+        if stim[2] == 'Short':
+            nf_short.append(stim)
+        else:
+            nf_long.append(stim)
+
+    #add random selection of 16
+    nf_short = nf_short + random.sample(nf_short, 8)
+    nf_long = nf_long + random.sample(nf_long, 8)
+
+    #shuffle
+    random.shuffle(nf_short)
+    random.shuffle(nf_long)
+
+    #for each block
+    trial = 0
+    for bl in range(14):
+
+        # get all targets/rpfoils for each block
+        stims_in = stims_target_rpfoils
+
+        #add unique new foils
+        stims_in = stims_in + nf_short[:8] + nf_long[:8]
+        del nf_short[:8]
+        del nf_long[:8]
+
+        #shuffle
+        random.shuffle(stims_in)
+
+        #determine hand
+        if (bl+subj) % 2 == 0:
+            block_hand = 'RIGHT'
+        else:
+            block_hand = 'LEFT'
+
+        for i in stims_in:
+            trial += 1
+            print('Trial ' + str(trial) + '/' + str(80*14))
+            sim.reset()
+            do_trial(i, block_hand)
+
+    print(
+    '\nTotal time: ' + str(round(time.time() - start, 2)) + ' seconds for ' + str(round(total_sim_time,2)) + ' seconds simulation.\n')
+
+    sim.close()
+
+    # save behavioral data
+    save_results('output' + '_model_subj_' + str(subj))
+
 
 
 
 #choice of trial, etc
 if not nengo_gui_on:
-    print 'nengo gui not on'
 
-    full_dims = False
-    initialize_model(subj=0)
-
-
-    do_1_trial(trial_info=('Target', 1, 'Short', 'METAL', 'SPARK'), hand='RIGHT')
+    #do_1_trial(trial_info=('Target', 1, 'Short', 'METAL', 'SPARK'), hand='RIGHT')
     #do_1_trial(trial_info=('NewFoil', 1, 'Short', 'CARGO', 'HOOD'),hand='LEFT')
     #do_1_trial(trial_info=('RPFoil', 1,	'Short', 'SODA', 'BRAIN'), hand='RIGHT')
 
-    #do_4_trials()
-    #do_1_block('RIGHT')
+    do_4_trials()
+
+    #do_1_block('RIGHT',subj=0)
     #do_1_block('LEFT')
+    #do_experiment(1)
+
 
 else:
-
-    print 'nengo gui on'
+    #nengo gui on
     initialize_model(subj=0)
     create_model()
 
