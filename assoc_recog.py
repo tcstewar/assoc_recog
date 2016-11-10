@@ -28,7 +28,7 @@ else:
 #### SETTINGS #####
 
 nengo_gui_on = __name__ == '__builtin__'
-ocl = False #use openCL
+ocl = True #use openCL
 high_dims = False #use full dimensions or not
 verbose = True
 
@@ -59,7 +59,7 @@ else:
 
 #set dimensions used by the model
 if high_dims:
-    D = 256 #for real words need at least 320, probably move op to 512 for full experiment
+    D = 256 #for real words need at least 320, probably move op to 512 for full experiment. Not sure, 96 works fine for half. Maybe 128 for real?
     Dmid = 128
     Dlow = 48
     print('\tFull dimensions: D = ' + str(D) + ', Dmid = ' + str(Dmid) + ', Dlow = ' + str(Dlow))
@@ -110,7 +110,15 @@ def display_func(t, x):
 
 
 #load stimuli, subj=0 means a subset of the stims of subject 1 (no long words), works well with lower dims
-def load_stims(subj=0):
+#short=True does the same, except for any random subject, odd subjects get short words, even subjects long words
+def load_stims(subj=0,short=True):
+
+    #subj=0 is old, new version makes subj 0 subj 1 + short, but with a fixed stim set
+    sub0 = False
+    if subj==0:
+        sub0 = True
+        subj = 1
+        short = True
 
     #pairs and words in experiment for training model
     global target_pairs #learned word pairs
@@ -132,20 +140,35 @@ def load_stims(subj=0):
     stimsNFshort = np.genfromtxt(cur_path + '/stims/S' + str(subj) + 'NFShort.txt', skip_header=True,
                                  dtype=[('probe', np.str_, 8), ('fan', 'int'), ('wordlen', np.str_, 8),
                                         ('item1', np.str_, 8), ('item2', np.str_, 8)], usecols=[1,2,3,4,5])
-
-
-    if not(subj == 0):
-        stimsNFlong = np.genfromtxt(cur_path + '/stims/S' + str(subj) + 'NFLong.txt', skip_header=True,
+    stimsNFlong = np.genfromtxt(cur_path + '/stims/S' + str(subj) + 'NFLong.txt', skip_header=True,
                                 dtype=[('probe', np.str_, 8), ('fan', 'int'), ('wordlen', np.str_, 8),
                                        ('item1', np.str_, 8), ('item2', np.str_, 8)], usecols=[1,2,3,4,5])
 
-    #combine
-    if not(subj == 0):
-        stims = np.hstack((stims, stimsNFshort, stimsNFlong))
+    #if short, use a small set of new foils
+    if short:
+        if subj % 2 == 0: #even -> long
+            stimsNF = random.sample(stimsNFlong,8)
+        else: #odd -> short
+            if sub0:  # not random when sub0 == True
+                stimsNF = stimsNFshort[0:8]
+            else:
+                stimsNF = random.sample(stimsNFshort,8)
     else:
-        stims = np.hstack((stims, stimsNFshort))
+        stimsNF = np.hstack((stimsNFshort,stimsNFlong))
 
+    #combine
+    stims = np.hstack((stims, stimsNF))
     stims = stims.tolist()
+
+    #if short, only keep shorts for odd subjects or longs for even subjects
+    new_stims = []
+    if short:
+        for i in stims:
+            if subj % 2 == 0 and i[2] == 'Long':
+                new_stims.append(i)
+            elif subj % 2 == 1 and i[2] == 'Short':
+                new_stims.append(i)
+        stims = new_stims
 
     #parse out different categories
     target_pairs = []
@@ -228,13 +251,13 @@ def get_image(item):
 
 
 # performs all steps in model ini
-def initialize_model(subj=0):
+def initialize_model(subj=0,short=True):
 
     #warn when loading full stim set with low dimensions:
-    if subj > 0 and not(high_dims):
+    if not(short) and not(high_dims):
         warn = warnings.warn('Initializing model with full stimulus set, but using low dimensions for vocabs.')
 
-    load_stims(subj)
+    load_stims(subj,short=short)
     load_images()
     initialize_vocabs()
 
@@ -438,7 +461,7 @@ def create_model():
 
         # random state to start
         rng = np.random.RandomState(9)
-        encoders = Gabor().generate(n_hid, (11, 11), rng=rng)  # gabor encoders, 11x11 apparently, why?
+        encoders = Gabor().generate(n_hid, (5, 5), rng=rng)  # gabor encoders, 11x11 apparently, why?
         encoders = Mask((14, 90)).populate(encoders, rng=rng,
                                            flatten=True)  # use them on part of the image
 
@@ -601,7 +624,7 @@ def create_model():
 
                 x_response_done = 'dot(goal,RESPOND) + dot(motor,MIDDLE+INDEX+LEFT+RIGHT) - .1 --> goal=END',
                 y_end = 'dot(goal,END)-1 --> goal=END',
-                z_threshold = '.2 -->'
+                z_threshold = '.1 -->'
 
                 #possible to match complete buffer, ie is representation filled?
                 # motor_input=1.5*target_hand+MIDDLE,
@@ -740,7 +763,7 @@ def do_trial(trial_info, hand):
           + ', ' + trial_info[2] + ' - ' + ' '.join(trial_info[3:]) + ' - ' + hand + ' ----\n')
 
     #run sim at least 100 ms
-    sim.run(.8,progress_bar=verbose) #make this shorter than fastest RT
+    sim.run(.651,progress_bar=verbose) #make this shorter than fastest RT
 
     if verbose:
         print('Stepped sim started...')
@@ -959,14 +982,16 @@ def do_1_block(block_hand='RIGHT', subj=0):
 
 
 
-def do_experiment(subj=1):
+def do_experiment(subj=1,short=True):
 
     print('===== RUNNING FULL EXPERIMENT =====')
 
     #mix of MEG and EEG experiment
     #14 blocks (7 left, 7 right)
     #64 targets/rp-foils per block + 16 new foils (EEG)
-    #total number new foils = 14*16=224. We only have 208, but we can repeat some.
+    #if short == True, 32 targets/rp-foils + 8 new foils (only short (odd subjects) or long words (even subjects))
+    #for full exp total number new foils = 14*16=224. We only have 208, but we can repeat some.
+    #for short exp we repeat a set of 8 foils each block (model is reset anyway)
     global verbose
     verbose = False
     global total_sim_time
@@ -977,6 +1002,10 @@ def do_experiment(subj=1):
     global familiarity_probe
     global concepts_probe
 
+    #subj 0 => subj 1 short
+    if subj==0:
+    #    subj = 1
+        short = True
 
 
     subj_gl = subj
@@ -990,26 +1019,29 @@ def do_experiment(subj=1):
 
     start = time.time()
 
-    initialize_model(subj=subj)
+    initialize_model(subj=subj,short=short)
     create_model()
     prepare_sim()
 
     #split nf in long and short
     nf_short = list()
     nf_long = list()
-    for stim in stims_new_foils:
-        if stim[2] == 'Short':
-            nf_short.append(stim)
-        else:
-            nf_long.append(stim)
+    if not(short):
+        for stim in stims_new_foils:
+            if stim[2] == 'Short':
+                nf_short.append(stim)
+            else:
+                nf_long.append(stim)
 
-    #add random selection of 16
-    nf_short = nf_short + random.sample(nf_short, 8)
-    nf_long = nf_long + random.sample(nf_long, 8)
+        #add random selection of 16
+        nf_short = nf_short + random.sample(nf_short, 16)
+        nf_long = nf_long + random.sample(nf_long, 16)
 
-    #shuffle
-    random.shuffle(nf_short)
-    random.shuffle(nf_long)
+        #shuffle
+        random.shuffle(nf_short)
+        random.shuffle(nf_long)
+    else:
+        nf_short = stims_new_foils
 
     #for each block
     trial = 0
@@ -1018,10 +1050,13 @@ def do_experiment(subj=1):
         # get all targets/rpfoils for each block
         stims_in = stims_target_rpfoils
 
-        #add unique new foils
-        stims_in = stims_in + nf_short[:8] + nf_long[:8]
-        del nf_short[:8]
-        del nf_long[:8]
+        #add unique new foils if not short
+        if not(short):
+            stims_in = stims_in + nf_short[:8] + nf_long[:8]
+            del nf_short[:8]
+            del nf_long[:8]
+        else: #add fixed nf if short
+            stims_in = stims_in + nf_short + nf_long
 
         #shuffle
         random.shuffle(stims_in)
@@ -1034,7 +1069,7 @@ def do_experiment(subj=1):
 
         for i in stims_in:
             trial += 1
-            print('Trial ' + str(trial) + '/' + str(80*14))
+            print('Trial ' + str(trial) + '/' + str(len(stims_in)*14))
             sim.reset()
             do_trial(i, block_hand)
 
@@ -1053,7 +1088,7 @@ def do_experiment(subj=1):
 #choice of trial, etc
 if not nengo_gui_on:
 
-    do_1_trial(trial_info=('Target', 1, 'Short', 'METAL', 'SPARK'), hand='RIGHT')
+    #do_1_trial(trial_info=('Target', 1, 'Short', 'METAL', 'SPARK'), hand='RIGHT')
     #do_1_trial(trial_info=('NewFoil', 1, 'Short', 'CARGO', 'HOOD'),hand='LEFT')
     #do_1_trial(trial_info=('RPFoil', 1,	'Short', 'SODA', 'BRAIN'), hand='RIGHT')
 
@@ -1061,19 +1096,20 @@ if not nengo_gui_on:
 
     #do_1_block('RIGHT',subj=1)
     #do_1_block('LEFT')
-    #do_experiment(1)
-
+    startpp = 1
+    for pp in range(2):
+        do_experiment(startpp+pp,short=True)
 
 else:
     #nengo gui on
 
     #New Foils
-    #cur_item1 = 'CARGO'
-    #cur_item2 = 'HOOD'
+    cur_item1 = 'CARGO'
+    cur_item2 = 'HOOD'
 
     #Targets
-    cur_item1 = 'METAL'
-    cur_item2 = 'SPARK'
+    #cur_item1 = 'METAL'
+    #cur_item2 = 'SPARK'
 
     #Re-paired foisl
     # cur_item1 = 'SODA'
@@ -1083,6 +1119,7 @@ else:
     cur_hand = 'LEFT'
 
     initialize_model(subj=0)
+
     create_model()
 
 
