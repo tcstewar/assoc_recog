@@ -204,7 +204,7 @@ def load_stims(subj=0,short=True):
 
     # remove duplicates
     items = np.unique(items).tolist()
-    items.append('FIXATION')
+    #items.append('FIXATION')
     target_words = np.unique(target_words).tolist()
 
 
@@ -212,7 +212,7 @@ def load_stims(subj=0,short=True):
 # load images for vision
 def load_images():
 
-    global X_train, y_train, y_train_words
+    global X_train, y_train, y_train_words, fixation_image
 
     indir = cur_path + '/images/'
     files = os.listdir(indir)
@@ -220,7 +220,7 @@ def load_images():
 
     #select only images for current item set
     for fn in files:
-        if fn[-4:] == '.png' and (fn[:-4] in items):
+        if fn[-4:] == '.png' and ((fn[:-4] in items)):
              files2.append(fn)
 
     X_train = np.empty(shape=(np.size(files2), 90*14),dtype='float32') #images x pixels matrix
@@ -241,9 +241,20 @@ def load_images():
     X_train = 2 * X_train - 1  # normalize to -1 to 1
 
 
+    #add fixation separately (only for presenting, no mapping to concepts)
+    r = png.Reader(cur_path + '/images/FIXATION.png')
+    r = r.asDirect()
+    image_2d = np.vstack(itertools.imap(np.uint8, r[2]))
+    image_2d /= 255
+    fixation_image = np.empty(shape=(1,90*14),dtype='float32')
+    fixation_image[0] = image_2d.reshape(1, 90 * 14)
+
 #returns pixels of image representing item (ie METAL)
 def get_image(item):
-    return X_train[y_train_words.index(item)]
+    if item != 'FIXATION':
+        return X_train[y_train_words.index(item)]
+    else:
+        return fixation_image[0]
 
 
 
@@ -372,7 +383,7 @@ cur_hand = 'LEFT'
 
 # returns images of current words for display # fixation for 51 ms.
 def present_pair(t):
-    if t < .052:
+    if t < .102:
         return np.hstack((np.ones(7*90),get_image('FIXATION'),np.ones(7*90)))
     else:
         im1 = get_image(cur_item1)
@@ -394,10 +405,10 @@ def present_pair(t):
 def present_item2(t, output_attend):
 
     #no-attention scale factor
-    no_attend = .5
+    no_attend = .3
 
     #first fixation before start trial
-    if t < .052:
+    if t < .102:
         # ret_ima = np.zeros(1260)
         ret_ima = no_attend * get_image('FIXATION')
     else: #then either word or zeros (mix of words?)
@@ -593,14 +604,14 @@ def create_model():
 
         model.bg = spa.BasalGanglia(
             spa.Actions(
-                a_aa_wait =            'dot(goal,DO_TASK) + dot(concepts,FIXATION) - .6 --> goal=WAIT',
-                a_attend_item1    =    '2*dot(goal,WAIT) - dot(concepts,FIXATION) - dot(concepts,NONE) - .6 --> goal=RECOG, attend=ITEM1',
+                a_aa_wait =            'dot(goal,WAIT) - .9 -->',
+                a_attend_item1    =    'dot(goal,DO_TASK) - .2 --> goal=RECOG, attend=ITEM1',
                 b_attending_item1 =    'dot(goal,RECOG) + dot(attend,ITEM1) - concepts_evidence - .5 --> goal=RECOG, attend=ITEM1, vis_pair=2*attend*concepts+2*concepts', #, dm_learned_words=vis_pair',
-                c_attend_item2    =    'dot(goal,RECOG) + dot(attend,ITEM1) + concepts_evidence - 1.9 --> goal=RECOG, attend=ITEM2, vis_pair=2*attend*concepts+2*concepts, dm_learned_words=vis_pair',
-                d_attending_item2 =    'dot(goal,RECOG) + dot(attend,ITEM2) - concepts_evidence - .4 --> goal=RECOG, attend=ITEM2, vis_pair=2*attend*concepts+2*concepts, dm_learned_words=vis_pair',
-                e_judge_familiarity =  'dot(goal,RECOG) + dot(attend,ITEM2) + concepts_evidence - 2.2 --> goal=FAMILIARITY, vis_pair=2*attend*concepts+2*concepts, dm_learned_words=vis_pair, do_fam=GO',
+                c_attend_item2    =    'dot(goal,RECOG) + dot(attend,ITEM1) + concepts_evidence - 1.8 --> goal=RECOG2, attend=ITEM2, vis_pair=2*attend*concepts+2*concepts, dm_learned_words=vis_pair',
+                d_attending_item2 =    'dot(goal,RECOG2) + dot(attend,ITEM2) - concepts_evidence - .2 --> goal=RECOG2, attend=ITEM2, vis_pair=2*attend*concepts+2*concepts, dm_learned_words=vis_pair',
+                e_judge_familiarity =  'dot(goal,RECOG2) - dot(goal,RECOG) + dot(attend,ITEM2) + concepts_evidence - 2.1 --> goal=FAMILIARITY, vis_pair=2*attend*concepts+2*concepts, dm_learned_words=vis_pair, do_fam=GO',
 
-                fa_judge_familiarityA = 'dot(goal,FAMILIARITY) - .1 --> goal=FAMILIARITY, dm_learned_words=vis_pair, do_fam=GO',
+                fa_judge_familiarityA = 'dot(goal,FAMILIARITY) - dot(goal,WAIT) + .7 --> goal=FAMILIARITY, dm_learned_words=vis_pair, do_fam=GO',
 
                 g_respond_unfamiliar = 'dot(goal,FAMILIARITY+RESPOND) - familiarity - .5 --> goal=RESPOND, dm_learned_words=vis_pair, do_fam=GO, motor_input=1.5*target_hand+MIDDLE',
                 h_respond_familiar =   'dot(goal,FAMILIARITY+RESPOND) + familiarity - .5 --> goal=RESPOND, dm_learned_words=vis_pair, do_fam=GO, motor_input=1.5*target_hand+INDEX',
@@ -671,7 +682,9 @@ def create_model():
 
 
         #input
-        model.input = spa.Input(goal=lambda t: 'DO_TASK' if t < .020  else '0') #first 50 ms fixation
+        model.input = spa.Input(goal=goal_func)
+
+
 
         #print(sum(ens.n_neurons for ens in model.all_ensembles))
 
@@ -679,6 +692,13 @@ def create_model():
         ### END MODEL
 
 
+def goal_func(t):
+    if t < .101:
+        return 'WAIT'
+    elif t < .121:
+        return 'DO_TASK'
+    else:
+        return '0'  # first 50 ms fixation
 
 
 ##### EXPERIMENTAL CONTROL #####
@@ -763,7 +783,7 @@ def do_trial(trial_info, hand):
           + ', ' + trial_info[2] + ' - ' + ' '.join(trial_info[3:]) + ' - ' + hand + ' ----\n')
 
     #run sim at least 100 ms
-    sim.run(.651,progress_bar=verbose) #make this shorter than fastest RT
+    sim.run(.701,progress_bar=verbose) #make this shorter than fastest RT
 
     if verbose:
         print('Stepped sim started...')
@@ -1108,8 +1128,8 @@ else:
     cur_item2 = 'HOOD'
 
     #Targets
-    #cur_item1 = 'METAL'
-    #cur_item2 = 'SPARK'
+    cur_item1 = 'METAL'
+    cur_item2 = 'SPARK'
 
     #Re-paired foisl
     # cur_item1 = 'SODA'
