@@ -31,6 +31,7 @@ nengo_gui_on = __name__ == '__builtin__'
 ocl = True #use openCL
 high_dims = False #use full dimensions or not
 verbose = True
+fixation_time = 200 #ms
 
 print('\nSettings:')
 
@@ -383,7 +384,7 @@ cur_hand = 'LEFT'
 
 # returns images of current words for display # fixation for 51 ms.
 def present_pair(t):
-    if t < .102:
+    if t < (fixation_time/1000.0)+.002:
         return np.hstack((np.ones(7*90),get_image('FIXATION'),np.ones(7*90)))
     else:
         im1 = get_image(cur_item1)
@@ -405,10 +406,10 @@ def present_pair(t):
 def present_item2(t, output_attend):
 
     #no-attention scale factor
-    no_attend = .3
+    no_attend = .1
 
     #first fixation before start trial
-    if t < .102:
+    if t < (fixation_time/1000.0) + .002:
         # ret_ima = np.zeros(1260)
         ret_ima = no_attend * get_image('FIXATION')
     else: #then either word or zeros (mix of words?)
@@ -425,7 +426,7 @@ def present_item2(t, output_attend):
             else:
                 ret_ima = get_image(cur_item2)
 
-    return ret_ima
+    return (.8 * ret_ima)
 
 
 #get vector representing hand
@@ -461,7 +462,7 @@ def create_model():
             nengo.Connection(model.hand_input,model.target_hand.input,synapse=None)
 
             model.attend = spa.State(D, vocab=vocab_attend, feedback=.5)  # vocab_attend
-            model.goal = spa.State(D, vocab_goal, feedback=1)  # current goal
+            model.goal = spa.State(Dlow, vocab=vocab_goal, feedback=.8)  # current goal
 
 
         ### vision ###
@@ -489,6 +490,10 @@ def create_model():
                                                     #intercepts=nengo.dists.Choice([-0.5]), #should we comment this out? not sure what's happening
                                                     #max_rates=nengo.dists.Choice([100]),
                                                     encoders=encoders)
+            #recurrent connection (time constant 500 ms)
+            # strength = 1 - (100/500) = .8
+            nengo.Connection(model.vision_gabor,model.vision_gabor, synapse=.1, transform=.3)
+
 
             model.visual_representation = nengo.Ensemble(n_hid, dimensions=Dmid)
 
@@ -540,7 +545,7 @@ def create_model():
 
         # this stores the accumulated evidence for or against familiarity
         model.familiarity = spa.State(1, feedback=1, feedback_synapse=0.1) #fb syn influences speed of acc
-        familiarity_scale = 0.2
+        familiarity_scale = 0.15
         nengo.Connection(model.dm_learned_words.am.ensembles[-1], model.familiarity.input, transform=-familiarity_scale) #accumulate to -1
         nengo.Connection(model.dm_learned_words.am.elem_output, model.familiarity.input, #am.element_output == all outputs, we sum
                          transform=familiarity_scale * np.ones((1, model.dm_learned_words.am.elem_output.size_out))) #accumulate to 1
@@ -604,22 +609,24 @@ def create_model():
 
         model.bg = spa.BasalGanglia(
             spa.Actions(
-                a_aa_wait =            'dot(goal,WAIT) - .9 -->',
-                a_attend_item1    =    'dot(goal,DO_TASK) - .2 --> goal=RECOG, attend=ITEM1',
-                b_attending_item1 =    'dot(goal,RECOG) + dot(attend,ITEM1) - concepts_evidence - .5 --> goal=RECOG, attend=ITEM1, vis_pair=2*attend*concepts+2*concepts', #, dm_learned_words=vis_pair',
-                c_attend_item2    =    'dot(goal,RECOG) + dot(attend,ITEM1) + concepts_evidence - 1.8 --> goal=RECOG2, attend=ITEM2, vis_pair=2*attend*concepts+2*concepts, dm_learned_words=vis_pair',
-                d_attending_item2 =    'dot(goal,RECOG2) + dot(attend,ITEM2) - concepts_evidence - .2 --> goal=RECOG2, attend=ITEM2, vis_pair=2*attend*concepts+2*concepts, dm_learned_words=vis_pair',
-                e_judge_familiarity =  'dot(goal,RECOG2) - dot(goal,RECOG) + dot(attend,ITEM2) + concepts_evidence - 2.1 --> goal=FAMILIARITY, vis_pair=2*attend*concepts+2*concepts, dm_learned_words=vis_pair, do_fam=GO',
+                #wait & start
+                a_aa_wait =            'dot(goal,WAIT) - .8 --> goal=0',
+                a_attend_item1    =    'dot(goal,DO_TASK) - .1 --> goal=RECOG, attend=ITEM1',
 
-                fa_judge_familiarityA = 'dot(goal,FAMILIARITY) - dot(goal,WAIT) + .7 --> goal=FAMILIARITY, dm_learned_words=vis_pair, do_fam=GO',
+                #attend words
+                b_attending_item1 =    'dot(goal,RECOG+DO_TASK) + dot(attend,ITEM1) - concepts_evidence - .3 --> goal=RECOG, attend=ITEM1, vis_pair=ITEM1*concepts+concepts', #, dm_learned_words=vis_pair',
+                c_attend_item2    =    'dot(goal,RECOG) + dot(attend,ITEM1) + concepts_evidence - 1.8 --> goal=RECOG2, attend=ITEM2, vis_pair=ITEM1*concepts+concepts, dm_learned_words=vis_pair',
+                d_attending_item2 =    '1.3*dot(goal,RECOG2+RECOG) - dot(goal,FAMILIARITY) + dot(attend,ITEM2) - concepts_evidence - .3 --> goal=RECOG2, attend=ITEM2, vis_pair=ITEM2*concepts+concepts, dm_learned_words=vis_pair',
+                e_judge_familiarity =  'dot(goal,RECOG2) - dot(goal,RECOG+FAMILIARITY) + dot(attend,ITEM2) + concepts_evidence - 2.1 --> goal=FAMILIARITY, vis_pair=ITEM2*concepts+concepts, dm_learned_words=vis_pair, do_fam=GO',
 
-                g_respond_unfamiliar = 'dot(goal,FAMILIARITY+RESPOND) - familiarity - .5 --> goal=RESPOND, dm_learned_words=vis_pair, do_fam=GO, motor_input=1.5*target_hand+MIDDLE',
-                h_respond_familiar =   'dot(goal,FAMILIARITY+RESPOND) + familiarity - .5 --> goal=RESPOND, dm_learned_words=vis_pair, do_fam=GO, motor_input=1.5*target_hand+INDEX',
+                #judge familiarity
+                #f_judge_familiarity = 'dot(goal,FAMILIARITY) - dot(goal,WAIT) + .7 --> goal=FAMILIARITY, dm_learned_words=vis_pair, do_fam=GO',
+                f_judge_familiarity='dot(goal,FAMILIARITY) - .0 --> goal=FAMILIARITY, dm_learned_words=vis_pair, do_fam=GO',
 
+                g_respond_unfamiliar = 'dot(goal,FAMILIARITY+RESPOND) - familiarity - .3 --> goal=RESPOND, dm_learned_words=vis_pair, do_fam=GO, motor_input=1.5*target_hand+MIDDLE',
+                h_respond_familiar =   'dot(goal,FAMILIARITY+RESPOND) + familiarity - .3 --> goal=RESPOND, dm_learned_words=vis_pair, do_fam=GO, motor_input=1.5*target_hand+INDEX',
 
-
-
-                #fam 'dot(goal,RECOG2)+dot(attend,ITEM2)+familiarity-1.3 --> goal=RECOLLECTION,dm_pairs = 2*vis_pair, representation=3*dm_pairs',# vis_pair=ITEM2*concepts',
+        	    #fam 'dot(goal,RECOG2)+dot(attend,ITEM2)+familiarity-1.3 --> goal=RECOLLECTION,dm_pairs = 2*vis_pair, representation=3*dm_pairs',# vis_pair=ITEM2*concepts',
                 #fam 'dot(goal,RECOLLECTION) - .5 --> goal=RECOLLECTION, representation=2*dm_pairs',
 
                 #fam 'dot(goal,RECOLLECTION) + 2*rep_filled - 1.3 --> goal=COMPARE_ITEM1, attend=ITEM1, comparison_A = 2*vis_pair,comparison_B = 2*representation*~attend',
@@ -633,9 +640,9 @@ def create_model():
 
                 # 'dot(goal,RECOLLECTION) + (1 - dot(representation,vis_pair)) - 1.3 --> goal=RESPOND, motor_input=1.0*target_hand+MIDDLE',
 
-                x_response_done = 'dot(goal,RESPOND) + dot(motor,MIDDLE+INDEX+LEFT+RIGHT) - .1 --> goal=END',
-                y_end = 'dot(goal,END)-1 --> goal=END',
-                z_threshold = '.1 -->'
+                x_response_done = 'dot(goal,RESPOND) + dot(motor,MIDDLE+INDEX+LEFT+RIGHT) - .3 --> goal=END',
+                y_end = 'dot(goal,END)-.8 --> goal=END',
+                z_threshold = '.1 --> goal=0'
 
                 #possible to match complete buffer, ie is representation filled?
                 # motor_input=1.5*target_hand+MIDDLE,
@@ -689,13 +696,27 @@ def create_model():
         #print(sum(ens.n_neurons for ens in model.all_ensembles))
 
         #return model
+        
+        #to show select BG rules
+        # get names rules
+        vocab_actions = spa.Vocabulary(model.bg.output.size_out)
+        for i, action in enumerate(model.bg.actions.actions):
+            vocab_actions.add(action.name.upper(), np.eye(model.bg.output.size_out)[i])
+        model.actions = spa.State(model.bg.output.size_out,
+                                  vocab=vocab_actions)
+        nengo.Connection(model.thalamus.output, model.actions.input)
+
+        for net in model.networks:
+            if net.label is not None and net.label.startswith('channel'):
+                net.label = ''
+        
         ### END MODEL
 
 
 def goal_func(t):
-    if t < .101:
+    if t < (fixation_time/1000.0) + .002:
         return 'WAIT'
-    elif t < .121:
+    elif t < (fixation_time/1000.0) + .022: #perhaps get from distri
         return 'DO_TASK'
     else:
         return '0'  # first 50 ms fixation
@@ -1128,8 +1149,8 @@ else:
     cur_item2 = 'HOOD'
 
     #Targets
-    cur_item1 = 'METAL'
-    cur_item2 = 'SPARK'
+    #cur_item1 = 'METAL'
+    #cur_item2 = 'SPARK'
 
     #Re-paired foisl
     # cur_item1 = 'SODA'
