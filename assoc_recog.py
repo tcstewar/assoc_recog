@@ -552,7 +552,7 @@ def create_model():
             model.visconn = nengo.Connection(model.vision_gabor, model.visual_representation, synapse=0.005, #was .005
                                             eval_points=X_train, function=train_targets,
                                             solver=nengo.solvers.LstsqL2(reg=0.01))
-            nengo.Connection(model.attended_item, model.vision_gabor, synapse=.05) #synapse?
+            nengo.Connection(model.attended_item, model.vision_gabor, synapse=.03) #synapse?
 
             # display attended item, only in gui
             if nengo_gui_on:
@@ -593,14 +593,14 @@ def create_model():
 
         #learned words
         model.dm_learned_words = spa.AssociativeMemory(vocab_learned_words,threshold=.2) #default_output_key='NONE' familiarity should be continuous over all items, so no wta
-        nengo.Connection(model.dm_learned_words.output,model.dm_learned_words.input,transform=.4,synapse=.05)
+        nengo.Connection(model.dm_learned_words.output,model.dm_learned_words.input,transform=.4,synapse=.02)
 
         # this stores the accumulated evidence for or against familiarity
         model.familiarity = spa.State(1, feedback=.9, feedback_synapse=0.1) #fb syn influences speed of acc
-        familiarity_scale = 0.3
+        familiarity_scale = 0.3 #keep stable for negative fam
         #nengo.Connection(model.dm_learned_words.am.ensembles[-1], model.familiarity.input, transform=-(familiarity_scale+0.8)) #accumulate to -1
         nengo.Connection(model.dm_learned_words.am.elem_output, model.familiarity.input, #am.element_output == all outputs, we sum
-                         transform=familiarity_scale * np.ones((1, model.dm_learned_words.am.elem_output.size_out))) #accumulate to 1
+                         transform=(familiarity_scale+.1) * np.ones((1, model.dm_learned_words.am.elem_output.size_out))) #accumulate to 1
 
         model.do_fam = spa.AssociativeMemory(vocab_reset, default_output_key='CLEAR', threshold=.2)
         nengo.Connection(model.do_fam.am.ensembles[-1], model.familiarity.all_ensembles[0].neurons,
@@ -668,14 +668,14 @@ def create_model():
                 a_attend_item1    =    'dot(goal,DO_TASK) - .1 --> goal=RECOG, attend=ITEM1, do_concepts=GO',
 
                 #attend words
-                b_attending_item1 =    'dot(goal,RECOG) + dot(attend,ITEM1) - concepts_evidence - .3 --> goal=RECOG, attend=ITEM1, do_concepts=GO, vis_pair=2.8*(ITEM1*concepts)',
-                c_attend_item2    =    'dot(goal,RECOG) + dot(attend,ITEM1) + concepts_evidence - 1.8 --> goal=RECOG2, attend=ITEM2, vis_pair=2.8*(ITEM1*concepts)',
+                b_attending_item1 =    'dot(goal,RECOG) + dot(attend,ITEM1) - concepts_evidence - .3 --> goal=RECOG, attend=ITEM1, do_concepts=GO', # vis_pair=2.5*(ITEM1*concepts)',
+                c_attend_item2    =    'dot(goal,RECOG) + dot(attend,ITEM1) + concepts_evidence - 1.8 --> goal=RECOG2, attend=ITEM2, vis_pair=2.7*(ITEM1*concepts)',
 
-                d_attending_item2 =    'dot(goal,RECOG2+RECOG) + dot(attend,ITEM2) - concepts_evidence - .5 --> goal=RECOG2, attend=ITEM2, do_concepts=GO, vis_pair=1*(ITEM2*concepts),dm_learned_words=1.3*(~ITEM1*vis_pair+~ITEM2*vis_pair)',
-                e_judge_familiarity =  'dot(goal,RECOG2) + dot(attend,ITEM2) + concepts_evidence - 1.9 --> goal=FAMILIARITY, do_fam=GO, vis_pair=1*(ITEM2*concepts), dm_learned_words=1.3*(~ITEM1*vis_pair+~ITEM2*vis_pair)',
+                d_attending_item2 =    'dot(goal,RECOG2+RECOG) + dot(attend,ITEM2) - concepts_evidence - .5 --> goal=RECOG2, attend=ITEM2, do_concepts=GO, dm_learned_words=1.0*(~ITEM1*vis_pair)', #vis_pair=1.2*(ITEM2*concepts)
+                e_judge_familiarity =  'dot(goal,RECOG2) + dot(attend,ITEM2) + concepts_evidence - 1.9 --> goal=FAMILIARITY, do_fam=GO, vis_pair=2.0*(ITEM2*concepts), dm_learned_words=2.0*(~ITEM1*vis_pair+~ITEM2*vis_pair)',
 
                 #judge familiarity
-                f_judge_familiarity =  'dot(goal,FAMILIARITY) - .1 --> goal=FAMILIARITY, do_fam=GO, dm_learned_words=1.0*(~ITEM1*vis_pair+~ITEM2*vis_pair)',
+                f_judge_familiarity =  'dot(goal,FAMILIARITY) - .1 --> goal=FAMILIARITY, do_fam=GO, dm_learned_words=.8*(~ITEM1*vis_pair+~ITEM2*vis_pair)',
 
                 g_respond_unfamiliar = 'dot(goal,FAMILIARITY) - familiarity - .5*dot(fingers,L1+L2+R1+R2) - .6 --> goal=RESPOND, do_fam=GO, motor_input=1.6*(target_hand+MIDDLE)',
                 h_respond_familiar =   'dot(goal,FAMILIARITY) + familiarity - .5*dot(fingers,L1+L2+R1+R2) - .6 --> goal=RESPOND, do_fam=GO, motor_input=1.6*(target_hand+INDEX)',
@@ -694,7 +694,7 @@ def create_model():
 
                 # 'dot(goal,RECOLLECTION) + (1 - dot(representation,vis_pair)) - 1.3 --> goal=RESPOND, motor_input=1.0*target_hand+MIDDLE',
 
-                x_response_done = 'dot(goal,RESPOND) + 1.5*dot(fingers,L1+L2+R1+R2) - .8 --> goal=2*END',
+                x_response_done = '1.1*dot(goal,RESPOND) + 1.5*dot(fingers,L1+L2+R1+R2) - .7--> goal=2*END',
                 y_end = 'dot(goal,END)-.1 --> goal=END',
                 z_threshold = '.05 --> goal=0'
 
@@ -875,7 +875,7 @@ def do_trial(trial_info, hand):
         position_finger = np.max(last_motor_pos)
 
 
-        if position_finger > .8: #.68 represents key press
+        if resp_step == -1 and position_finger > .8: #.68 represents key press
             resp_step = int(sim.n_steps)
 
 
