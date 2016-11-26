@@ -65,7 +65,7 @@ if high_dims:
     Dlow = 48
     print('\tFull dimensions: D = ' + str(D) + ', Dmid = ' + str(Dmid) + ', Dlow = ' + str(Dlow))
 else: #lower dims
-    D = 192
+    D = 256
     Dmid = 48
     Dlow = 32
     print('\tLow dimensions: D = ' + str(D) + ', Dmid = ' + str(Dmid) + ', Dlow = ' + str(Dlow))
@@ -107,6 +107,49 @@ def display_func(t, x):
                   xlink:href="data:image/png;base64,%s"
                   style="image-rendering: auto;">
            </svg>''' % (input_shape[2]*2, input_shape[1]*2, ''.join(img_str))
+
+
+# read in computer
+# add computer display
+r = png.Reader(cur_path + '/images/imac.png')
+r = r.asDirect()
+imac_img = np.vstack(itertools.imap(np.uint8, r[2]))
+
+def display_func_computer(t, x):
+    # reshape etc
+    if np.size(x) > 14 * 90:
+        input_shape = (1, 28, 90)
+    else:
+        input_shape = (1, 14, 90)
+
+    values = x.reshape(input_shape)  # back to 2d
+    values = values.transpose((1, 2, 0))
+    values = (values + 1) / 2 * 255.  # 0-255
+    values = values.astype('uint8')  # as ints
+
+    if values.shape[-1] == 1:
+        values = values[:, :, 0]
+
+        # add imac
+        imac = imac_img  # 512x512
+        imac[0:input_shape[1], 0:input_shape[2]] = values
+
+
+        # make png
+    # imac = imac.astype('uint8')
+    png_rep = PIL.Image.fromarray(imac)
+    buffer = cStringIO.StringIO()
+    png_rep.save(buffer, format="PNG")
+    img_str = base64.b64encode(buffer.getvalue())
+
+    # html for nengo
+    display_func_computer._nengo_html_ = '''
+           <svg width="100%%" height="100%%" viewbox="0 0 512 512">
+           <image width="100%%" height="100%%"
+                  xlink:href="data:image/png;base64,%s"
+                  style="image-rendering: auto;">
+           </svg>''' % (''.join(img_str))
+
 
 
 
@@ -282,8 +325,9 @@ def initialize_vocabs():
     print '---- INITIALIZING VOCABS ----'
 
     global vocab_vision #low level visual vocab
-    global vocab_concepts #vocab with all concepts
+    global vocab_concepts #vocab with all concepts and pairs
     global vocab_learned_words #vocab with learned words
+    global vocab_all_words #vocab with all words
     global vocab_learned_pairs #vocab with learned pairs
     global vocab_motor #upper motor hierarchy (LEFT, INDEX)
     global vocab_fingers #finger activation (L1, R2)
@@ -304,13 +348,27 @@ def initialize_vocabs():
     train_targets = vocab_vision.vectors
 
 
-    #word concepts - has all concepts, including new foils
-    vocab_concepts = spa.Vocabulary(D, max_similarity=0.3)
+    #word concepts - has all concepts, including new foils, and pairs
+    vocab_concepts = spa.Vocabulary(D, max_similarity=0.5)
     for i in y_train_words:
         vocab_concepts.parse(i)
     vocab_concepts.parse('ITEM1')
     vocab_concepts.parse('ITEM2')
     vocab_concepts.parse('NONE')
+
+    list_of_pairs = []
+    for item1, item2 in target_pairs:
+        vocab_concepts.add('%s_%s' % (item1, item2), vocab_concepts.parse(
+            '%s*ITEM1 + %s*ITEM2' % (item1, item2)))  # add pairs to concepts to use same vectors
+        list_of_pairs.append('%s_%s' % (item1, item2))  # keep list of pairs notation
+
+    # add all presented pairs to concepts for display
+    for item1, item2 in newfoil_pairs:
+        vocab_concepts.add('%s_%s' % (item1, item2), vocab_concepts.parse(
+            '%s*ITEM1 + %s*ITEM2' % (item1, item2)))  # add pairs to concepts to use same vectors
+    for item1, item2 in rpfoil_pairs:
+        vocab_concepts.add('%s_%s' % (item1, item2), vocab_concepts.parse(
+            '%s*ITEM1 + %s*ITEM2' % (item1, item2)))  # add pairs to concepts to use same vectors
 
 
     #vision-concept mapping between vectors
@@ -321,30 +379,15 @@ def initialize_vocabs():
     #vocab with learned words
     vocab_learned_words = vocab_concepts.create_subset(target_words + ['NONE'])
 
+    #vocab with all words
+    vocab_all_words = vocab_concepts.create_subset(y_train_words + ['ITEM1', 'ITEM2'])
 
     #vocab with learned pairs
-    list_of_pairs = []
-    for item1, item2 in target_pairs:
-        #vocab_learned_pairs.parse('%s*ITEM1 + %s*ITEM2' % (item1, item2)) #think this can go, but let's see
-        #vocab_learned_pairs.add('%s_%s' % (item1,item2), vocab_learned_pairs.parse('%s*ITEM1 + %s*ITEM2' % (item1, item2)))
-        vocab_concepts.add('%s_%s' % (item1,item2), vocab_concepts.parse('%s*ITEM1 + %s*ITEM2' % (item1, item2))) #add pairs to concepts to use same vectors
-        list_of_pairs.append('%s_%s' % (item1,item2)) #keep list of pairs notation
     vocab_learned_pairs = vocab_concepts.create_subset(list_of_pairs) #get only pairs
-    #print vocab_learned_pairs.keys
 
-    #remove all pairs from vis pair?
-    #vocab_concepts = vocab_concepts.create_subset(y_train_words + ['ITEM1', 'ITEM2'])
-
-
-
-    #add all presented pairs to concepts for display
-    for item1, item2 in newfoil_pairs:
-        vocab_concepts.add('%s_%s' % (item1, item2), vocab_concepts.parse(
-            '%s*ITEM1 + %s*ITEM2' % (item1, item2)))  # add pairs to concepts to use same vectors
-    for item1, item2 in rpfoil_pairs:
-        vocab_concepts.add('%s_%s' % (item1, item2), vocab_concepts.parse(
-            '%s*ITEM1 + %s*ITEM2' % (item1, item2)))  # add pairs to concepts to use same vectors
-
+    #print vocab_learned_words.keys
+    #print y_train_words
+    #print target_words
 
     #motor vocabs, just for sim calcs
     vocab_motor = spa.Vocabulary(Dmid) #different dimension to be sure, upper motor hierarchy
@@ -364,6 +407,8 @@ def initialize_vocabs():
     vocab_goal = spa.Vocabulary(Dlow)
     vocab_goal.parse('DO_TASK')
     vocab_goal.parse('RECOG')
+    vocab_goal.parse('RECOG2')
+    vocab_goal.parse('FAMILIARITY')
     vocab_goal.parse('RESPOND')
     vocab_goal.parse('END')
 
@@ -449,7 +494,7 @@ def create_model():
     with model:
 
         #display current stimulus pair (not part of model)
-        if nengo_gui_on:
+        if nengo_gui_on and False:
             model.pair_input = nengo.Node(present_pair)
             model.pair_display = nengo.Node(display_func, size_in=model.pair_input.size_out)  # to show input
             nengo.Connection(model.pair_input, model.pair_display, synapse=None)
@@ -475,9 +520,10 @@ def create_model():
 
         # random state to start
         rng = np.random.RandomState(9)
-        encoders = Gabor().generate(n_hid, (5, 5), rng=rng)  # gabor encoders, 11x11 apparently, why?
+        encoders = Gabor().generate(n_hid, (4, 4), rng=rng)  # gabor encoders, 11x11 apparently, why?
         encoders = Mask((14, 90)).populate(encoders, rng=rng,
                                            flatten=True)  # use them on part of the image
+
 
         model.visual_net = nengo.Network()
         with model.visual_net:
@@ -494,15 +540,19 @@ def create_model():
                                                     encoders=encoders)
             #recurrent connection (time constant 500 ms)
             # strength = 1 - (100/500) = .8
-            nengo.Connection(model.vision_gabor,model.vision_gabor, synapse=.1, transform=.4)
+            #nengo.Connection(model.vision_gabor,model.vision_gabor, synapse=.1, transform=.4)
 
+            zeros = np.zeros_like(X_train)
+            nengo.Connection(model.vision_gabor, model.vision_gabor, synapse=0.1,
+                             eval_points=np.vstack([X_train, zeros, np.random.randn(*X_train.shape)]),
+                             transform=.4)
 
             model.visual_representation = nengo.Ensemble(n_hid, dimensions=Dmid)
 
             model.visconn = nengo.Connection(model.vision_gabor, model.visual_representation, synapse=0.005, #was .005
                                             eval_points=X_train, function=train_targets,
                                             solver=nengo.solvers.LstsqL2(reg=0.01))
-            nengo.Connection(model.attended_item, model.vision_gabor, synapse=None) #synapse?
+            nengo.Connection(model.attended_item, model.vision_gabor, synapse=.05) #synapse?
 
             # display attended item, only in gui
             if nengo_gui_on:
@@ -519,7 +569,7 @@ def create_model():
         ### central cognition ###
 
         # concepts
-        model.concepts = spa.AssociativeMemory(vocab_concepts,
+        model.concepts = spa.AssociativeMemory(vocab_all_words, #vocab_concepts,
                                                wta_output=True,
                                                wta_inhibit_scale=1, #was 1
                                                #default_output_key='NONE', #what to say if input doesn't match
@@ -538,24 +588,17 @@ def create_model():
                          transform=np.ones((model.concepts_evidence.all_ensembles[0].n_neurons, 1)) * -10,
                          synapse=0.005)
 
-        #reset if concepts is NONE (default)
-        #nengo.Connection(model.concepts.am.ensembles[-1], model.concepts_evidence.all_ensembles[0].neurons,
-        #                 transform=np.ones((model.concepts_evidence.all_ensembles[0].n_neurons, 1)) * -40, # was -10
-        #                 synapse=0.005) #lower synapse gives shorter impact of reset - makes the reaction a little slower
-
-
-
         # pair representation
-        model.vis_pair = spa.State(D, vocab=vocab_concepts, feedback=1.4) #was 2, 1.6 works ok, but everything gets activated.
+        model.vis_pair = spa.State(D, vocab=vocab_all_words, feedback=1.0, feedback_synapse=.05) #was 2, 1.6 works ok, but everything gets activated.
 
         #learned words
-        model.dm_learned_words = spa.AssociativeMemory(vocab_learned_words,default_output_key='NONE',threshold=.3) #familiarity should be continuous over all items, so no wta
-        nengo.Connection(model.dm_learned_words.output,model.dm_learned_words.input,transform=.4,synapse=.01)
+        model.dm_learned_words = spa.AssociativeMemory(vocab_learned_words,threshold=.2) #default_output_key='NONE' familiarity should be continuous over all items, so no wta
+        nengo.Connection(model.dm_learned_words.output,model.dm_learned_words.input,transform=.4,synapse=.05)
 
         # this stores the accumulated evidence for or against familiarity
         model.familiarity = spa.State(1, feedback=.9, feedback_synapse=0.1) #fb syn influences speed of acc
-        familiarity_scale = 0.4
-        nengo.Connection(model.dm_learned_words.am.ensembles[-1], model.familiarity.input, transform=-(familiarity_scale+0.5)) #accumulate to -1
+        familiarity_scale = 0.3
+        #nengo.Connection(model.dm_learned_words.am.ensembles[-1], model.familiarity.input, transform=-(familiarity_scale+0.8)) #accumulate to -1
         nengo.Connection(model.dm_learned_words.am.elem_output, model.familiarity.input, #am.element_output == all outputs, we sum
                          transform=familiarity_scale * np.ones((1, model.dm_learned_words.am.elem_output.size_out))) #accumulate to 1
 
@@ -563,8 +606,9 @@ def create_model():
         nengo.Connection(model.do_fam.am.ensembles[-1], model.familiarity.all_ensembles[0].neurons,
                          transform=np.ones((model.familiarity.all_ensembles[0].n_neurons, 1)) * -10,
                          synapse=0.005)
-
-
+        #negative accumulator
+        nengo.Connection(model.do_fam.am.elem_output, model.familiarity.input,
+                         transform=-familiarity_scale * np.ones((1, model.do_fam.am.elem_output.size_out))) #accumulate to -1
 
         #fam model.dm_pairs = spa.AssociativeMemory(vocab_learned_pairs, input_keys=list_of_pairs,wta_output=True)
         #fam nengo.Connection(model.dm_pairs.output,model.dm_pairs.input,transform=.5)
@@ -624,23 +668,19 @@ def create_model():
                 a_attend_item1    =    'dot(goal,DO_TASK) - .1 --> goal=RECOG, attend=ITEM1, do_concepts=GO',
 
                 #attend words
-                b_attending_item1 =    'dot(goal,RECOG) + dot(attend,ITEM1) - concepts_evidence - .3 --> goal=RECOG, attend=ITEM1, do_concepts=GO, vis_pair=1.8*(ITEM1*concepts+1.2*concepts)',
-                c_attend_item2    =    'dot(goal,RECOG) + dot(attend,ITEM1) + concepts_evidence - 1.8 --> goal=RECOG2, attend=ITEM2, vis_pair=1.8*(ITEM1*concepts+1.2*concepts)',
+                b_attending_item1 =    'dot(goal,RECOG) + dot(attend,ITEM1) - concepts_evidence - .3 --> goal=RECOG, attend=ITEM1, do_concepts=GO, vis_pair=2.8*(ITEM1*concepts)',
+                c_attend_item2    =    'dot(goal,RECOG) + dot(attend,ITEM1) + concepts_evidence - 1.8 --> goal=RECOG2, attend=ITEM2, vis_pair=2.8*(ITEM1*concepts)',
 
-                d_attending_item2 =    'dot(goal,RECOG2+RECOG) + dot(attend,ITEM2) - concepts_evidence - .5 --> goal=RECOG2, attend=ITEM2, do_concepts=GO, vis_pair=1.8*(ITEM2*concepts+1.2*concepts),dm_learned_words=1.3*vis_pair',
-                e_judge_familiarity =  'dot(goal,RECOG2) + dot(attend,ITEM2) + concepts_evidence - 1.9 --> goal=FAMILIARITY, do_fam=GO, vis_pair=1.8*(ITEM2*concepts+1.2*concepts), dm_learned_words=1.3*vis_pair',
-
- #               d_attending_item2='dot(goal,RECOG2) - 1.1*dot(goal,FAMILIARITY) + 1.2*dot(attend,ITEM2) - concepts_evidence - .8 --> goal=RECOG2, attend=ITEM2, do_concepts=GO, vis_pair=ITEM2*concepts+concepts, dm_learned_words=2*vis_pair',
-#                e_judge_familiarity='dot(goal,RECOG2) - 1.5*dot(goal,RECOG+FAMILIARITY) + dot(attend,ITEM2) + concepts_evidence - 1.9 --> goal=FAMILIARITY, vis_pair=ITEM2*concepts+concepts, dm_learned_words=2*vis_pair, do_fam=GO',
-
+                d_attending_item2 =    'dot(goal,RECOG2+RECOG) + dot(attend,ITEM2) - concepts_evidence - .5 --> goal=RECOG2, attend=ITEM2, do_concepts=GO, vis_pair=1*(ITEM2*concepts),dm_learned_words=1.3*(~ITEM1*vis_pair+~ITEM2*vis_pair)',
+                e_judge_familiarity =  'dot(goal,RECOG2) + dot(attend,ITEM2) + concepts_evidence - 1.9 --> goal=FAMILIARITY, do_fam=GO, vis_pair=1*(ITEM2*concepts), dm_learned_words=1.3*(~ITEM1*vis_pair+~ITEM2*vis_pair)',
 
                 #judge familiarity
-                f_judge_familiarity =  'dot(goal,FAMILIARITY) - .1 --> goal=FAMILIARITY, dm_learned_words=1.3*vis_pair, do_fam=GO',
+                f_judge_familiarity =  'dot(goal,FAMILIARITY) - .1 --> goal=FAMILIARITY, do_fam=GO, dm_learned_words=1.0*(~ITEM1*vis_pair+~ITEM2*vis_pair)',
 
-                g_respond_unfamiliar = 'dot(goal,FAMILIARITY) - familiarity - .5*dot(fingers,L1+L2+R1+R2) - .7 --> goal=RESPOND, dm_learned_words=vis_pair, do_fam=GO, motor_input=1.6*(target_hand+MIDDLE)',
-                h_respond_familiar =   'dot(goal,FAMILIARITY) + familiarity - .5*dot(fingers,L1+L2+R1+R2) - .7 --> goal=RESPOND, dm_learned_words=vis_pair, do_fam=GO, motor_input=1.6*(target_hand+INDEX)',
-
-        	    #fam 'dot(goal,RECOG2)+dot(attend,ITEM2)+familiarity-1.3 --> goal=RECOLLECTION,dm_pairs = 2*vis_pair, representation=3*dm_pairs',# vis_pair=ITEM2*concepts',
+                g_respond_unfamiliar = 'dot(goal,FAMILIARITY) - familiarity - .5*dot(fingers,L1+L2+R1+R2) - .6 --> goal=RESPOND, do_fam=GO, motor_input=1.6*(target_hand+MIDDLE)',
+                h_respond_familiar =   'dot(goal,FAMILIARITY) + familiarity - .5*dot(fingers,L1+L2+R1+R2) - .6 --> goal=RESPOND, do_fam=GO, motor_input=1.6*(target_hand+INDEX)',
+                #dm_learned_words=(~ITEM1 * vis_pair + ~ITEM2 * vis_pair),
+                #fam 'dot(goal,RECOG2)+dot(attend,ITEM2)+familiarity-1.3 --> goal=RECOLLECTION,dm_pairs = 2*vis_pair, representation=3*dm_pairs',# vis_pair=ITEM2*concepts',
                 #fam 'dot(goal,RECOLLECTION) - .5 --> goal=RECOLLECTION, representation=2*dm_pairs',
 
                 #fam 'dot(goal,RECOLLECTION) + 2*rep_filled - 1.3 --> goal=COMPARE_ITEM1, attend=ITEM1, comparison_A = 2*vis_pair,comparison_B = 2*representation*~attend',
@@ -654,7 +694,7 @@ def create_model():
 
                 # 'dot(goal,RECOLLECTION) + (1 - dot(representation,vis_pair)) - 1.3 --> goal=RESPOND, motor_input=1.0*target_hand+MIDDLE',
 
-                x_response_done = 'dot(goal,RESPOND) + dot(fingers,L1+L2+R1+R2) - .8 --> goal=2*END',
+                x_response_done = 'dot(goal,RESPOND) + 1.5*dot(fingers,L1+L2+R1+R2) - .8 --> goal=2*END',
                 y_end = 'dot(goal,END)-.1 --> goal=END',
                 z_threshold = '.05 --> goal=0'
 
@@ -677,7 +717,7 @@ def create_model():
         model.cortical = spa.Cortical( # cortical connection: shorthand for doing everything with states and connections
             spa.Actions(
               #  'motor_input = .04*target_hand',
-                'dm_learned_words = .1*vis_pair',
+               # 'dm_learned_words = .1*vis_pair',
                 #'dm_pairs = 2*stimulus'
                 #'vis_pair = 2*attend*concepts+concepts',
                 #fam 'comparison_A = 2*vis_pair',
@@ -710,16 +750,17 @@ def create_model():
         
         #to show select BG rules
         # get names rules
-        vocab_actions = spa.Vocabulary(model.bg.output.size_out)
-        for i, action in enumerate(model.bg.actions.actions):
-            vocab_actions.add(action.name.upper(), np.eye(model.bg.output.size_out)[i])
-        model.actions = spa.State(model.bg.output.size_out,
+        if nengo_gui_on:
+            vocab_actions = spa.Vocabulary(model.bg.output.size_out)
+            for i, action in enumerate(model.bg.actions.actions):
+                vocab_actions.add(action.name.upper(), np.eye(model.bg.output.size_out)[i])
+            model.actions = spa.State(model.bg.output.size_out,
                                   vocab=vocab_actions)
-        nengo.Connection(model.thalamus.output, model.actions.input)
+            nengo.Connection(model.thalamus.output, model.actions.input)
 
-        for net in model.networks:
-            if net.label is not None and net.label.startswith('channel'):
-                net.label = ''
+            for net in model.networks:
+                if net.label is not None and net.label.startswith('channel'):
+                    net.label = ''
         
         ### END MODEL
 
@@ -822,6 +863,7 @@ def do_trial(trial_info, hand):
 
     stepsize = 5 #ms
     resp = -1
+    resp_step = -1
 
     while sim.time < 1:
 
@@ -832,15 +874,20 @@ def do_trial(trial_info, hand):
         last_motor_pos = sim.data[model.pr_motor_pos][int(sim.n_steps)-1 ]
         position_finger = np.max(last_motor_pos)
 
-        if position_finger >.8: #.68 represents key press
+
+        if position_finger > .8: #.68 represents key press
             resp_step = int(sim.n_steps)
 
 
+
+    if resp_step == -1:
+        resp_step = int(sim.n_steps)
+
     # determine response
-    similarities = [np.dot(sim.data[model.pr_motor][step - 1], vocab_fingers['L1'].v),
-                    np.dot(sim.data[model.pr_motor][step - 1], vocab_fingers['L2'].v),
-                    np.dot(sim.data[model.pr_motor][step - 1], vocab_fingers['R1'].v),
-                    np.dot(sim.data[model.pr_motor][step - 1], vocab_fingers['R2'].v)]
+    similarities = [np.dot(sim.data[model.pr_motor][resp_step - 1], vocab_fingers['L1'].v),
+                    np.dot(sim.data[model.pr_motor][resp_step - 1], vocab_fingers['L2'].v),
+                    np.dot(sim.data[model.pr_motor][resp_step - 1], vocab_fingers['R1'].v),
+                    np.dot(sim.data[model.pr_motor][resp_step - 1], vocab_fingers['R2'].v)]
     resp = np.argmax(similarities)
 
     if verbose:
@@ -867,9 +914,9 @@ def do_trial(trial_info, hand):
             acc = 1
 
     if verbose:
-        print('RT = ' + str(sim.time) + ', acc = ' + str(acc))
+        print('RT = ' + str(resp_step-1-200) + ', acc = ' + str(acc))
     total_sim_time += sim.time
-    results.append((subj_gl, trial_nr) + trial_info + (hand, np.round(sim.time,3), acc, resp))
+    results.append((subj_gl, trial_nr) + trial_info + (hand, (resp_step-1-200), acc, resp))
 
     #store vision
     vis = sim.data[model.pr_vision_gabor].sum(1)
@@ -1144,7 +1191,7 @@ if not nengo_gui_on:
     #do_1_block('RIGHT',subj=1)
     #do_1_block('LEFT')
     startpp = 1
-    for pp in range(2):
+    for pp in range(10):
         do_experiment(startpp+pp,short=True)
 
 else:
@@ -1153,6 +1200,10 @@ else:
     #New Foils
     cur_item1 = 'CARGO'
     cur_item2 = 'HOOD'
+
+    #New Foils2
+    #cur_item1 = 'EXIT'
+    #cur_item2 = 'BARN'
 
     #Targets
     #cur_item1 = 'METAL'
