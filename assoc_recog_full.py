@@ -494,7 +494,7 @@ def create_model():
     with model:
 
         #display current stimulus pair (not part of model)
-        if nengo_gui_on and True:
+        if nengo_gui_on and False:
             model.pair_input = nengo.Node(present_pair)
             model.pair_display = nengo.Node(display_func, size_in=model.pair_input.size_out)  # to show input
             nengo.Connection(model.pair_input, model.pair_display, synapse=None)
@@ -609,25 +609,27 @@ def create_model():
         nengo.Connection(model.do_fam.am.elem_output, model.familiarity.input,
                          transform=-familiarity_scale * np.ones((1, model.do_fam.am.elem_output.size_out))) #accumulate to -1
 
-        #fam model.dm_pairs = spa.AssociativeMemory(vocab_learned_pairs, input_keys=list_of_pairs,wta_output=True)
-        #fam nengo.Connection(model.dm_pairs.output,model.dm_pairs.input,transform=.5)
+        #recollection
+        model.dm_pairs = spa.AssociativeMemory(vocab_learned_pairs,wta_output=True) #input_keys=list_of_pairs
+        nengo.Connection(model.dm_pairs.output,model.dm_pairs.input,transform=.5,synapse=.05)
 
         #this works:
         #fam model.representation = spa.AssociativeMemory(vocab_learned_pairs, input_keys=list_of_pairs, wta_output=True)
         #fam nengo.Connection(model.representation.output, model.representation.input, transform=2)
-        #fam model.rep_filled = spa.State(1,feedback_synapse=.005) #no fb syn specified
         #fam nengo.Connection(model.representation.am.elem_output,model.rep_filled.input, #am.element_output == all outputs, we sum
         #fam                  transform=.8*np.ones((1,model.representation.am.elem_output.size_out)),synapse=0)
+        
+        #this doesn't work // now (161220) it seems to work fine:
+        rep_scale = .5
+        model.representation = spa.State(D,feedback=1)
+        model.rep_filled = spa.State(1,feedback=.8,feedback_synapse=.01) #fb syn influences speed of acc
+        
+        nengo.Connection(model.representation.output, model.rep_filled.input, #am.element_output == all outputs, we sum
+                        transform=rep_scale*np.ones((1,model.representation.output.size_out)))
+        
 
-        #this doesn't:
-        #model.representation = spa.State(D,feedback=1)
-        #model.rep_filled = spa.State(1,feedback_synapse=.005) #no fb syn specified
-        #nengo.Connection(model.representation.output,model.rep_filled.input, #am.element_output == all outputs, we sum
-        #                 transform=.8*np.ones((1,model.representation.output.size_out)),synapse=0)
-
-
-        # this shouldn't really be fixed I think
-        #fam model.comparison = spa.Compare(D, vocab=vocab_concepts)
+        #comparison        
+        model.comparison = spa.Compare(D, vocab=vocab_concepts)
 
 
         #motor
@@ -677,13 +679,14 @@ def create_model():
                 f_judge_familiarity =  'dot(goal,FAMILIARITY) - .1 --> goal=FAMILIARITY, do_fam=GO, dm_learned_words=.8*(~ITEM1*vis_pair+~ITEM2*vis_pair)',
 
                 g_respond_unfamiliar = 'dot(goal,FAMILIARITY) - familiarity - .5*dot(fingers,L1+L2+R1+R2) - .6 --> goal=RESPOND, do_fam=GO, motor_input=1.6*(target_hand+MIDDLE)',
-                h_respond_familiar =   'dot(goal,FAMILIARITY) + familiarity - .5*dot(fingers,L1+L2+R1+R2) - .6 --> goal=RESPOND, do_fam=GO, motor_input=1.6*(target_hand+INDEX)',
+                #h_respond_familiar =   'dot(goal,FAMILIARITY) + familiarity - .5*dot(fingers,L1+L2+R1+R2) - .6 --> goal=RESPOND, do_fam=GO, motor_input=1.6*(target_hand+INDEX)',
 
-                #dm_learned_words=(~ITEM1 * vis_pair + ~ITEM2 * vis_pair),
-                #fam 'dot(goal,RECOG2)+dot(attend,ITEM2)+familiarity-1.3 --> goal=RECOLLECTION,dm_pairs = 2*vis_pair, representation=3*dm_pairs',# vis_pair=ITEM2*concepts',
-                #fam 'dot(goal,RECOLLECTION) - .5 --> goal=RECOLLECTION, representation=2*dm_pairs',
+                #recollection & representation
+                h_recollection =        'dot(goal,FAMILIARITY) + familiarity - .5*dot(fingers,L1+L2+R1+R2) - .6 --> goal=RECOLLECTION, dm_pairs = vis_pair',
+                i_representation =      'dot(goal,RECOLLECTION) - .1 --> goal=RECOLLECTION, dm_pairs = vis_pair, representation=dm_pairs',
 
-                #fam 'dot(goal,RECOLLECTION) + 2*rep_filled - 1.3 --> goal=COMPARE_ITEM1, attend=ITEM1, comparison_A = 2*vis_pair,comparison_B = 2*representation*~attend',
+                #comparison
+                j_compare_word1 =       'dot(goal,RECOLLECTION) + rep_filled - .4 --> goal=COMPARE_ITEM1, comparison_A = ~ITEM1*vis_pair, comparison_B = ~ITEM1*representation',
                 #fam 'dot(goal,COMPARE_ITEM1) + rep_filled + comparison -1 --> goal=COMPARE_ITEM2, attend=ITEM2, comparison_A = 2*vis_pair',#comparison_B = 2*representation*~attend',
                 #fam 'dot(goal,COMPARE_ITEM1) + rep_filled + (1-comparison) -1 --> goal=RESPOND,motor_input=1.0*target_hand+MIDDLE',#comparison_A = 2*vis_pair,comparison_B = 2*representation*~attend',
                 #fam 'dot(goal,COMPARE_ITEM2) + rep_filled + comparison - 1 --> goal=RESPOND,motor_input=1.0*target_hand+INDEX',#comparison_A = 2*vis_pair,comparison_B = 2*representation*~attend',
@@ -750,7 +753,7 @@ def create_model():
         
         #to show select BG rules
         # get names rules
-        if nengo_gui_on and False:
+        if nengo_gui_on:
             vocab_actions = spa.Vocabulary(model.bg.output.size_out)
             for i, action in enumerate(model.bg.actions.actions):
                 vocab_actions.add(action.name.upper(), np.eye(model.bg.output.size_out)[i])
@@ -1217,7 +1220,6 @@ else:
     cur_hand = 'RIGHT'
 
     initialize_model(subj=0)
-
 
     create_model()
     print('\t' + str(sum(ens.n_neurons for ens in model.all_ensembles)) + ' neurons')
