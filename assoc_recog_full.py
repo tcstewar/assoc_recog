@@ -620,9 +620,13 @@ def create_model():
         #fam                  transform=.8*np.ones((1,model.representation.am.elem_output.size_out)),synapse=0)
         
         #this doesn't work // now (161220) it seems to work fine:
-        rep_scale = .5
-        model.representation = spa.State(D,feedback=1)
-        model.rep_filled = spa.State(1,feedback=.8,feedback_synapse=.01) #fb syn influences speed of acc
+        rep_scale = 0.5
+        model.representation = spa.State(D,feedback=1.0)
+        model.rep_filled = spa.State(1,feedback=.9,feedback_synapse=.1) #fb syn influences speed of acc
+        model.do_rep = spa.AssociativeMemory(vocab_reset, default_output_key='CLEAR', threshold=.2)
+        nengo.Connection(model.do_rep.am.ensembles[-1], model.rep_filled.all_ensembles[0].neurons,
+                         transform=np.ones((model.rep_filled.all_ensembles[0].n_neurons, 1)) * -10,
+                         synapse=0.005)
         
         nengo.Connection(model.representation.output, model.rep_filled.input, #am.element_output == all outputs, we sum
                         transform=rep_scale*np.ones((1,model.representation.output.size_out)))
@@ -683,10 +687,10 @@ def create_model():
 
                 #recollection & representation
                 h_recollection =        'dot(goal,FAMILIARITY) + familiarity - .5*dot(fingers,L1+L2+R1+R2) - .6 --> goal=RECOLLECTION, dm_pairs = vis_pair',
-                i_representation =      'dot(goal,RECOLLECTION) - .1 --> goal=RECOLLECTION, dm_pairs = vis_pair, representation=dm_pairs',
+                i_representation =      'dot(goal,RECOLLECTION) - .1 --> goal=RECOLLECTION, dm_pairs = vis_pair, representation=dm_pairs, do_rep=GO',
 
                 #comparison
-                j_compare_word1 =       'dot(goal,RECOLLECTION) + rep_filled - .4 --> goal=COMPARE_ITEM1, comparison_A = ~ITEM1*vis_pair, comparison_B = ~ITEM1*representation',
+                j_compare_word1 =       'dot(goal,RECOLLECTION) + rep_filled - .8 --> goal=COMPARE_ITEM1, do_rep=GO, comparison_A = ~ITEM1*vis_pair, comparison_B = ~ITEM1*representation',
                 #fam 'dot(goal,COMPARE_ITEM1) + rep_filled + comparison -1 --> goal=COMPARE_ITEM2, attend=ITEM2, comparison_A = 2*vis_pair',#comparison_B = 2*representation*~attend',
                 #fam 'dot(goal,COMPARE_ITEM1) + rep_filled + (1-comparison) -1 --> goal=RESPOND,motor_input=1.0*target_hand+MIDDLE',#comparison_A = 2*vis_pair,comparison_B = 2*representation*~attend',
                 #fam 'dot(goal,COMPARE_ITEM2) + rep_filled + comparison - 1 --> goal=RESPOND,motor_input=1.0*target_hand+INDEX',#comparison_A = 2*vis_pair,comparison_B = 2*representation*~attend',
