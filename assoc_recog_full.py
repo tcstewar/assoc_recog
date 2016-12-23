@@ -67,7 +67,7 @@ if high_dims:
 else: #lower dims
     D = 256
     Dmid = 48
-    Dlow = 32
+    Dlow = 48
     print('\tLow dimensions: D = ' + str(D) + ', Dmid = ' + str(Dmid) + ', Dlow = ' + str(Dlow))
 
 print('')
@@ -619,21 +619,43 @@ def create_model():
         #fam nengo.Connection(model.representation.am.elem_output,model.rep_filled.input, #am.element_output == all outputs, we sum
         #fam                  transform=.8*np.ones((1,model.representation.am.elem_output.size_out)),synapse=0)
         
-        #this doesn't work // now (161220) it seems to work fine:
+            #==============================================================================
+            #         However, for a case like this, I'm more tempted by an
+            # alternate approach: compute the dot product of the State value with
+            # the sum of all the terms in the vocabulary.  So that would be checking
+            # if the state has in it any of the symbols we know about.  This is just
+            # a linear function, so the neurons are much better at computing this,
+            # and the only change is that instead of
+            # 
+            # transform=rep_scale*np.ones((1,model.representation.output.size_out))
+            # 
+            # you use the sum of the elements in the vocabulary (which you can get
+            #                                                   at with vocab.vectors)
+            # 
+            # 
+            #==============================================================================
+        
+            #this doesn't work // now (161220) it seems to work fine:
         rep_scale = 0.5
-        model.representation = spa.State(D,feedback=1.0)
+        model.representation = spa.State(D,vocab=vocab_all_words,feedback=1.0)
         model.rep_filled = spa.State(1,feedback=.9,feedback_synapse=.1) #fb syn influences speed of acc
         model.do_rep = spa.AssociativeMemory(vocab_reset, default_output_key='CLEAR', threshold=.2)
         nengo.Connection(model.do_rep.am.ensembles[-1], model.rep_filled.all_ensembles[0].neurons,
                          transform=np.ones((model.rep_filled.all_ensembles[0].n_neurons, 1)) * -10,
                          synapse=0.005)
         
-        nengo.Connection(model.representation.output, model.rep_filled.input, #am.element_output == all outputs, we sum
-                        transform=rep_scale*np.ones((1,model.representation.output.size_out)))
+        #vecs = vocab_all_words.vectors
+        #vecs = sum(vecs)
+        #vecs = vecs.transpose()
+        nengo.Connection(model.representation.output, model.rep_filled.input, 
+                        transform=rep_scale*np.reshape(sum(vocab_learned_pairs.vectors),((1,D))))
         
+        #nengo.Connection(model.dm_pairs.am.elem_output, model.rep_filled.input, #am.element_output == all outputs, we sum
+        #                transform=rep_scale*np.ones((1,model.dm_pairs.am.elem_output.size_out)))
+        #still check if rep_scale works in this context
 
         #comparison        
-        model.comparison = spa.Compare(D, vocab=vocab_concepts)
+        model.comparison = spa.Compare(D, vocab=vocab_all_words)
 
 
         #motor
@@ -682,8 +704,8 @@ def create_model():
                 #judge familiarity
                 f_judge_familiarity =  'dot(goal,FAMILIARITY) - .1 --> goal=FAMILIARITY, do_fam=GO, dm_learned_words=.8*(~ITEM1*vis_pair+~ITEM2*vis_pair)',
 
-                g_respond_unfamiliar = 'dot(goal,FAMILIARITY) - familiarity - .5*dot(fingers,L1+L2+R1+R2) - .6 --> goal=RESPOND, do_fam=GO, motor_input=1.6*(target_hand+MIDDLE)',
-                #h_respond_familiar =   'dot(goal,FAMILIARITY) + familiarity - .5*dot(fingers,L1+L2+R1+R2) - .6 --> goal=RESPOND, do_fam=GO, motor_input=1.6*(target_hand+INDEX)',
+                g_respond_unfamiliar = 'dot(goal,FAMILIARITY) - familiarity - .5*dot(fingers,L1+L2+R1+R2) - .6 --> goal=RESPOND_MISMATCH, do_fam=GO, motor_input=1.6*(target_hand+MIDDLE)',
+                #g2_respond_familiar =   'dot(goal,FAMILIARITY) + familiarity - .5*dot(fingers,L1+L2+R1+R2) - .6 --> goal=RESPOND, do_fam=GO, motor_input=1.6*(target_hand+INDEX)',
 
                 #recollection & representation
                 h_recollection =        'dot(goal,FAMILIARITY) + familiarity - .5*dot(fingers,L1+L2+R1+R2) - .6 --> goal=RECOLLECTION, dm_pairs = vis_pair',
@@ -691,34 +713,30 @@ def create_model():
 
                 #comparison
                 j_compare_word1 =       'dot(goal,RECOLLECTION) + rep_filled - .8 --> goal=COMPARE_ITEM1, do_rep=GO, comparison_A = ~ITEM1*vis_pair, comparison_B = ~ITEM1*representation',
-                #fam 'dot(goal,COMPARE_ITEM1) + rep_filled + comparison -1 --> goal=COMPARE_ITEM2, attend=ITEM2, comparison_A = 2*vis_pair',#comparison_B = 2*representation*~attend',
-                #fam 'dot(goal,COMPARE_ITEM1) + rep_filled + (1-comparison) -1 --> goal=RESPOND,motor_input=1.0*target_hand+MIDDLE',#comparison_A = 2*vis_pair,comparison_B = 2*representation*~attend',
-                #fam 'dot(goal,COMPARE_ITEM2) + rep_filled + comparison - 1 --> goal=RESPOND,motor_input=1.0*target_hand+INDEX',#comparison_A = 2*vis_pair,comparison_B = 2*representation*~attend',
-                #fam 'dot(goal,COMPARE_ITEM2) + rep_filled + (1-comparison) -1 --> goal=RESPOND,motor_input=1.0*target_hand+MIDDLE',#comparison_A = 2*vis_pair,comparison_B = 2*representation*~attend',
+                k_match_word1 =         'dot(goal,COMPARE_ITEM1) + comparison - 1 --> goal=COMPARE_ITEM2, comparison_A = ~ITEM2*vis_pair, comparison_B = ~ITEM2*representation',
+                l_mismatch_word1 =      'dot(goal,COMPARE_ITEM1) + (1-comparison) - 1 --> goal=RESPOND_MISMATCH, motor_input=1.6*(target_hand+MIDDLE), comparison_A = ~ITEM1*vis_pair, comparison_B = ~ITEM1*representation',
+                m_match_word2 =         'dot(goal,COMPARE_ITEM2) + comparison - 1 --> goal=RESPOND_MATCH, motor_input=1.6*(target_hand+INDEX), comparison_A = ~ITEM2*vis_pair, comparison_B = ~ITEM2*representation',
+                n_mismatch_word2 =      'dot(goal,COMPARE_ITEM2) + (1-comparison) - 1 --> goal=RESPOND_MISMATCH, motor_input=1.6*(target_hand+MIDDLE), comparison_A = ~ITEM2*vis_pair, comparison_B = ~ITEM2*representation',
 
-                #fam 'dot(goal,RESPOND) + comparison - 1 --> goal=RESPOND, motor_input=1.0*target_hand+INDEX', #comparison_A = 2*vis_pair,comparison_B = 2*representation*~attend',
-                #fam 'dot(goal,RESPOND) + (1-comparison) - 1 --> goal=RESPOND, motor_input=1.0*target_hand+MIDDLE', #comparison_A = 2*vis_pair,comparison_B = 2*representation*~attend',
-
-                # 'dot(goal,RECOLLECTION) + (1 - dot(representation,vis_pair)) - 1.3 --> goal=RESPOND, motor_input=1.0*target_hand+MIDDLE',
-
-                x_response_done = '1.1*dot(goal,RESPOND) + 1.5*dot(fingers,L1+L2+R1+R2) - .7--> goal=2*END',
-                y_end = 'dot(goal,END)-.1 --> goal=END',
-                z_threshold = '.05 --> goal=0'
+                #respond
+                o_respond_match =       'dot(goal,RESPOND_MATCH) - 1 --> goal=RESPOND_MATCH, motor_input=1.6*(target_hand+INDEX)',
+                p_respond_mismatch =    'dot(goal,RESPOND_MISMATCH) - 1 --> goal=RESPOND_MISMATCH, motor_input=1.6*(target_hand+MIDDLE)',
+                
+                #finish
+                x_response_done =       'dot(goal,RESPOND_MATCH) + dot(goal,RESPOND_MISMATCH) + 1.5*dot(fingers,L1+L2+R1+R2) - .7--> goal=2*END',
+                y_end =                 'dot(goal,END)-.1 --> goal=END',
+                z_threshold =           '.05 --> goal=0'
 
                 #possible to match complete buffer, ie is representation filled?
                 # motor_input=1.5*target_hand+MIDDLE,
 
             ))
 
-        #'dot(attention, W1) - evidence - 0.8 --> motor=NO, attention=W1',
-        #'dot(attention, W1) + evidence - 0.8 --> attention=W2, reset=EVIDENCE',
-        #'dot(attention, W1) --> attention=W1',  # if we don't set attention it goes back to 0
-        #'dot(attention, W2) - evidence - 0.8 --> motor=NO, attention=W2',
-        #'dot(attention, W2) + evidence - 0.8 --> motor=YES, attention=W2',
-        #'dot(attention, W2) --> attention=W2',  # option might be feedback on attention, then no rule 3/6 but default rule
+        
+        print(model.bg.actions.count)
+        #print(model.bg.dimensions)
 
-
-
+        
         model.thalamus = spa.Thalamus(model.bg)
 
         model.cortical = spa.Cortical( # cortical connection: shorthand for doing everything with states and connections
@@ -761,7 +779,7 @@ def create_model():
             vocab_actions = spa.Vocabulary(model.bg.output.size_out)
             for i, action in enumerate(model.bg.actions.actions):
                 vocab_actions.add(action.name.upper(), np.eye(model.bg.output.size_out)[i])
-            model.actions = spa.State(model.bg.output.size_out,
+            model.actions = spa.State(model.bg.output.size_out,subdimensions=model.bg.output.size_out,
                                   vocab=vocab_actions)
             nengo.Connection(model.thalamus.output, model.actions.input)
 
@@ -912,11 +930,20 @@ def do_trial(trial_info, hand):
 
     #resp 0 = left index, 1 = left middle, 2 = right index, 3 = right middle
     #response for familiarity:
+    #acc = 0 #default 0
+    #if trial_info[0] == 'Target' or trial_info[0] == 'RPFoil':
+    #    if (resp == 0 and hand == 'LEFT')  or (resp == 2 and hand == 'RIGHT'):
+    #        acc = 1
+    #else: #new foil
+    #    if (resp == 1 and hand == 'LEFT') or (resp == 3 and hand == 'RIGHT'):
+    #        acc = 1
+            
+    #response for assoc recog:
     acc = 0 #default 0
-    if trial_info[0] == 'Target' or trial_info[0] == 'RPFoil':
+    if trial_info[0] == 'Target':
         if (resp == 0 and hand == 'LEFT')  or (resp == 2 and hand == 'RIGHT'):
             acc = 1
-    else: #new foil
+    else: #new foil & rp foil
         if (resp == 1 and hand == 'LEFT') or (resp == 3 and hand == 'RIGHT'):
             acc = 1
 
