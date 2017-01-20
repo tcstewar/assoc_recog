@@ -31,7 +31,7 @@ nengo_gui_on = __name__ == '__builtin__'
 ocl = True #use openCL
 high_dims = False #use full dimensions or not
 verbose = True
-fixation_time = 200 #ms
+fixation_time = 50 #ms
 
 print('\nSettings:')
 
@@ -379,12 +379,14 @@ def initialize_vocabs():
     #vocab with learned words
     vocab_learned_words = vocab_concepts.create_subset(target_words + ['NONE'])
 
-    #vocab with all words
-    vocab_all_words = vocab_concepts.create_subset(y_train_words + ['ITEM1', 'ITEM2'])
-
     #vocab with learned pairs
     vocab_learned_pairs = vocab_concepts.create_subset(list_of_pairs) #get only pairs
 
+    #vocab with all words
+    vocab_all_words = vocab_concepts.create_subset(y_train_words + ['ITEM1', 'ITEM2'])
+    
+    
+    
     #print vocab_learned_words.keys
     #print y_train_words
     #print target_words
@@ -568,7 +570,7 @@ def create_model():
 
         ### central cognition ###
 
-        ##### Concepts #####
+        # concepts
         model.concepts = spa.AssociativeMemory(vocab_all_words, #vocab_concepts,
                                                wta_output=True,
                                                wta_inhibit_scale=1, #was 1
@@ -588,51 +590,55 @@ def create_model():
                          transform=np.ones((model.concepts_evidence.all_ensembles[0].n_neurons, 1)) * -10,
                          synapse=0.005)
 
-        ###### Visual Representation ######
+        # pair representation
         model.vis_pair = spa.State(D, vocab=vocab_all_words, feedback=1.0, feedback_synapse=.05) #was 2, 1.6 works ok, but everything gets activated.
 
+        #learned words
+        #model.dm_learned_words = spa.AssociativeMemory(vocab_learned_words,threshold=.2) #default_output_key='NONE' familiarity should be continuous over all items, so no wta
+        #nengo.Connection(model.dm_learned_words.output,model.dm_learned_words.input,transform=.4,synapse=.02)
 
-		##### Familiarity #####
-		
-        # Assoc Mem with Learned Words
-        # - familiarity signal should be continuous over all items, so no wta
-        model.dm_learned_words = spa.AssociativeMemory(vocab_learned_words,threshold=.2)
-        nengo.Connection(model.dm_learned_words.output,model.dm_learned_words.input,transform=.4,synapse=.02)
-
-        # Familiarity Accumulator
-        
-        model.familiarity = spa.State(1, feedback=.9, feedback_synapse=0.1) #fb syn influences speed of acc
+        # this stores the accumulated evidence for or against familiarity
+        #model.familiarity = spa.State(1, feedback=.9, feedback_synapse=0.1) #fb syn influences speed of acc
         #familiarity_scale = 0.2 #keep stable for negative fam
-        
-        # familiarity accumulator switch
-        model.do_fam = spa.AssociativeMemory(vocab_reset, default_output_key='CLEAR', threshold=.2)
-        # reset
-        nengo.Connection(model.do_fam.am.ensembles[-1], model.familiarity.all_ensembles[0].neurons,
-                         transform=np.ones((model.familiarity.all_ensembles[0].n_neurons, 1)) * -10,
-                         synapse=0.005)
-                         
-    	#first a sum to represent summed similarity
-    	model.summed_similarity = nengo.Ensemble(n_neurons=100,dimensions=1)
-    	nengo.Connection(model.dm_learned_words.am.elem_output, model.summed_similarity,
-    		transform=np.ones((1, model.dm_learned_words.am.elem_output.size_out))) #take sum
-    	
-    	#then a connection to accumulate this summed sim
-    	def familiarity_acc_transform(summed_sim):
-    		fam_scale = .5
-    		fam_threshold = 0 #actually, kind of bias
-    		fam_max = 1
-    		return fam_scale*(2*((summed_sim - fam_threshold)/(fam_max - fam_threshold)) - 1)
-    	
-    	nengo.Connection(model.summed_similarity, model.familiarity.input,
-                         function=familiarity_acc_transform)
-       
-       
-        ##### Recollection & Representation #####
-        
+        #nengo.Connection(model.dm_learned_words.am.ensembles[-1], model.familiarity.input, transform=-(familiarity_scale+0.8)) #accumulate to -1
+        #nengo.Connection(model.dm_learned_words.am.elem_output, model.familiarity.input, #am.element_output == all outputs, we sum
+          #               transform=(familiarity_scale+.1) * np.ones((1, model.dm_learned_words.am.elem_output.size_out))) #accumulate to 1
+
+        #model.do_fam = spa.AssociativeMemory(vocab_reset, default_output_key='CLEAR', threshold=.2)
+        #nengo.Connection(model.do_fam.am.ensembles[-1], model.familiarity.all_ensembles[0].neurons,
+        #                 transform=np.ones((model.familiarity.all_ensembles[0].n_neurons, 1)) * -10,
+        #                 synapse=0.005)
+        #negative accumulator
+        #nengo.Connection(model.do_fam.am.elem_output, model.familiarity.input,
+        #                 transform=-familiarity_scale * np.ones((1, model.do_fam.am.elem_output.size_out))) #accumulate to -1
+
+        #recollection
         model.dm_pairs = spa.AssociativeMemory(vocab_learned_pairs,wta_output=True) #input_keys=list_of_pairs
         nengo.Connection(model.dm_pairs.output,model.dm_pairs.input,transform=.5,synapse=.05)
 
- 		#representation
+        #this works:
+        #fam model.representation = spa.AssociativeMemory(vocab_learned_pairs, input_keys=list_of_pairs, wta_output=True)
+        #fam nengo.Connection(model.representation.output, model.representation.input, transform=2)
+        #fam nengo.Connection(model.representation.am.elem_output,model.rep_filled.input, #am.element_output == all outputs, we sum
+        #fam                  transform=.8*np.ones((1,model.representation.am.elem_output.size_out)),synapse=0)
+        
+            #==============================================================================
+            #         However, for a case like this, I'm more tempted by an
+            # alternate approach: compute the dot product of the State value with
+            # the sum of all the terms in the vocabulary.  So that would be checking
+            # if the state has in it any of the symbols we know about.  This is just
+            # a linear function, so the neurons are much better at computing this,
+            # and the only change is that instead of
+            # 
+            # transform=rep_scale*np.ones((1,model.representation.output.size_out))
+            # 
+            # you use the sum of the elements in the vocabulary (which you can get
+            #                                                   at with vocab.vectors)
+            # 
+            # 
+            #==============================================================================
+        
+            #this doesn't work // now (161220) it seems to work fine:
         rep_scale = 0.5
         model.representation = spa.State(D,vocab=vocab_all_words,feedback=1.0)
         model.rep_filled = spa.State(1,feedback=.9,feedback_synapse=.1) #fb syn influences speed of acc
@@ -641,18 +647,35 @@ def create_model():
                          transform=np.ones((model.rep_filled.all_ensembles[0].n_neurons, 1)) * -10,
                          synapse=0.005)
         
+        #vecs = vocab_all_words.vectors
+        #vecs = sum(vecs)
+        #vecs = vecs.transpose()
         nengo.Connection(model.representation.output, model.rep_filled.input, 
                         transform=rep_scale*np.reshape(sum(vocab_learned_pairs.vectors),((1,D))))
         
-        
-        ###### Comparison #####
-        
+        #nengo.Connection(model.dm_pairs.am.elem_output, model.rep_filled.input, #am.element_output == all outputs, we sum
+        #                transform=rep_scale*np.ones((1,model.dm_pairs.am.elem_output.size_out)))
+        #still check if rep_scale works in this context
+
+        #comparison      
+        #neurons_per_multiply : int, optional (Default: 200)
+        #Number of neurons to use in each product computation.
+            #input_magnitude : float, optional (Default: 1.0)
+            #The expected magnitude of the vectors to be multiplied.
+            #This value is used to determine the radius of the ensembles
+            #computing the element-wise product.
         model.comparison = spa.Compare(D, vocab=vocab_all_words,neurons_per_multiply=500, input_magnitude=.3)
-        
+        #nengo.Connection(model.comparison.output,model.comparison.output,transform=.8)
+
         #turns out comparison is not an accumulator - we also need one of those.
         model.comparison_accumulator = spa.State(1, feedback=.9, feedback_synapse=0.05) #fb syn influences speed of acc
         model.do_compare = spa.AssociativeMemory(vocab_reset, default_output_key='CLEAR', threshold=.2)
-       
+
+        #comparison_scale = 1.6
+        #neg_acc_scale = 0.5 #difference between positive and negative accumulation
+        #nengo.Connection(model.comparison.output, model.comparison_accumulator.input,
+        #                 transform=comparison_scale) #accumulate to 1
+ 		
  		#reset
         nengo.Connection(model.do_compare.am.ensembles[-1], model.comparison_accumulator.all_ensembles[0].neurons,
                          transform=np.ones((model.comparison_accumulator.all_ensembles[0].n_neurons, 1)) * -10,
@@ -661,6 +684,10 @@ def create_model():
     	#error because we apply a function to a 'passthrough' node, inbetween ensemble as a solution:
         model.comparison_result = nengo.Ensemble(n_neurons=100,dimensions=1)
         nengo.Connection(model.comparison.output, model.comparison_result)              
+        #negative accumulator to -1 in case of no evidence - trouble to get the balance right, and always spreads negative evidence. 
+        #nengo.Connection(model.do_compare.am.elem_output, model.comparison_accumulator.input,
+        #                transform=-neg_acc_scale * np.ones((1, model.do_compare.am.elem_output.size_out))) #accumulate to -1
+		
 		
         def comparison_acc_transform(comparison):
     		comparison_scale = .6
@@ -712,17 +739,17 @@ def create_model():
                 b_attending_item1 =    'dot(goal,RECOG) + dot(attend,ITEM1) - concepts_evidence - .3 --> goal=RECOG, attend=ITEM1, do_concepts=GO', # vis_pair=2.5*(ITEM1*concepts)',
                 c_attend_item2    =    'dot(goal,RECOG) + dot(attend,ITEM1) + concepts_evidence - 1.6 --> goal=RECOG2, attend=ITEM2, vis_pair=3*(ITEM1*concepts)',
 
-                d_attending_item2 =    'dot(goal,RECOG2+RECOG) + dot(attend,ITEM2) - concepts_evidence - .4 --> goal=RECOG2, attend=ITEM2, do_concepts=GO, dm_learned_words=1.0*(~ITEM1*vis_pair)', #vis_pair=1.2*(ITEM2*concepts)
-                e_start_familiarity =  'dot(goal,RECOG2) + dot(attend,ITEM2) + concepts_evidence - 1.8 --> goal=FAMILIARITY, do_fam=GO, vis_pair=1.9*(ITEM2*concepts), dm_learned_words=2.0*(~ITEM1*vis_pair+~ITEM2*vis_pair)',
+                d_attending_item2 =    'dot(goal,RECOG2+RECOG) + dot(attend,ITEM2) - concepts_evidence - .4 --> goal=RECOG2, attend=ITEM2, do_concepts=GO', #vis_pair=1.2*(ITEM2*concepts)
+                e_start_familiarity =  'dot(goal,RECOG2) + dot(attend,ITEM2) + concepts_evidence - 1.8 -->  goal=RECOLLECTION-ITEM2, vis_pair=1.9*(ITEM2*concepts)',
 
                 #judge familiarity
-                f_accumulate_familiarity =  '1.1*dot(goal,FAMILIARITY) - 0.2 --> goal=FAMILIARITY-RECOG2, do_fam=GO, dm_learned_words=.8*(~ITEM1*vis_pair+~ITEM2*vis_pair)',
+                #f_accumulate_familiarity =  '1.1*dot(goal,FAMILIARITY) - 0.2 --> goal=FAMILIARITY-RECOG2, do_fam=GO, dm_learned_words=.8*(~ITEM1*vis_pair+~ITEM2*vis_pair)',
 
-                g_respond_unfamiliar = 'dot(goal,FAMILIARITY) - familiarity - .5*dot(fingers,L1+L2+R1+R2) - .6 --> goal=RESPOND_MISMATCH-FAMILIARITY, do_fam=GO, motor_input=1.6*(target_hand+MIDDLE)',
+                #g_respond_unfamiliar = 'dot(goal,FAMILIARITY) - familiarity - .5*dot(fingers,L1+L2+R1+R2) - .6 --> goal=RESPOND_MISMATCH-FAMILIARITY, do_fam=GO, motor_input=1.6*(target_hand+MIDDLE)',
                 #g2_respond_familiar =   'dot(goal,FAMILIARITY) + familiarity - .5*dot(fingers,L1+L2+R1+R2) - .6 --> goal=RESPOND, do_fam=GO, motor_input=1.6*(target_hand+INDEX)',
 
                 #recollection & representation
-                h_recollection =        'dot(goal,FAMILIARITY) + familiarity - .5*dot(fingers,L1+L2+R1+R2) - .6 --> goal=RECOLLECTION-FAMILIARITY, dm_pairs = vis_pair',
+                #h_recollection =        'dot(goal,FAMILIARITY) + familiarity - .5*dot(fingers,L1+L2+R1+R2) - .6 --> goal=RECOLLECTION-FAMILIARITY, dm_pairs = vis_pair',
                 i_representation =      'dot(goal,RECOLLECTION) - rep_filled - .1 --> goal=RECOLLECTION, dm_pairs = vis_pair, representation=3*dm_pairs, do_rep=GO',
 
                 #comparison & respond
@@ -730,7 +757,7 @@ def create_model():
                 k_11_match_word1 =      'dot(goal,COMPARE_ITEM1) + comparison_accumulator - .7 --> goal=COMPARE_ITEM2-COMPARE_ITEM1, do_rep=GO, comparison_A = ~ITEM1*vis_pair, comparison_B = ~ITEM1*representation',
                 l_12_mismatch_word1 =   'dot(goal,COMPARE_ITEM1) + .4 * dot(goal,RESPOND_MISMATCH) - comparison_accumulator - .7 --> goal=RESPOND_MISMATCH-COMPARE_ITEM1, do_rep=GO, motor_input=1.6*(target_hand+MIDDLE), do_compare=GO, comparison_A = ~ITEM1*vis_pair, comparison_B = ~ITEM1*representation',
                 
-                compare_word2 =         'dot(goal,COMPARE_ITEM2) - .5 --> goal=COMPARE_ITEM2, do_compare=GO, comparison_A = ~ITEM2*vis_pair, comparison_B = ~ITEM2*representation',
+                compare_word2 =         'dot(goal,COMPARE_ITEM2) - .1 --> goal=COMPARE_ITEM2, do_compare=GO, comparison_A = ~ITEM2*vis_pair, comparison_B = ~ITEM2*representation',
                 m_match_word2 =         'dot(goal,COMPARE_ITEM2) + comparison_accumulator - .7 --> goal=RESPOND_MATCH-COMPARE_ITEM2, motor_input=1.6*(target_hand+INDEX), do_compare=GO, comparison_A = ~ITEM2*vis_pair, comparison_B = ~ITEM2*representation',
                 n_mismatch_word2 =      'dot(goal,COMPARE_ITEM2) - comparison_accumulator - dot(fingers,L1+L2+R1+R2)- .7 --> goal=RESPOND_MISMATCH-COMPARE_ITEM2, motor_input=1.6*(target_hand+MIDDLE),do_compare=GO, comparison_A = ~ITEM2*vis_pair, comparison_B = ~ITEM2*representation',
 
@@ -1256,8 +1283,8 @@ else:
     #cur_item2 = 'BARN'
 
     #Targets
-    #cur_item1 = 'METAL'
-    #cur_item2 = 'SPARK'
+    cur_item1 = 'METAL'
+    cur_item2 = 'SPARK'
 
     #Re-paired foils 1
     #cur_item1 = 'SODA' #matches HERB-BRAIN, so first one is mismatch, might be coincidence though
@@ -1275,6 +1302,7 @@ else:
     #cur_item1 = 'DEBT' #matches METAL-SPARK, so second one is mismatch (again, this is coincidence)
     #cur_item2 = 'SPEAR'
 
+    
     cur_hand = 'RIGHT'
 
     initialize_model(subj=0)
