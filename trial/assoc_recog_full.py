@@ -399,16 +399,6 @@ def present_pair(t):
         return np.hstack((im1, im2))
 
 
-# returns image 1 <100 ms, otherwise image 2 || NOT USED ANYMORE
-#def present_item(t):
-#    if t < .1:
-#        #print(cur_item1)
-#        return get_image(cur_item1)
-#    else:
-#        #print(cur_item2)
-#        return get_image(cur_item2)
-
-
 
 def present_item2(t, output_attend):
 
@@ -434,6 +424,23 @@ def present_item2(t, output_attend):
                 ret_ima = get_image(cur_item2)
 
     return (.8 * ret_ima)
+
+def fake_vision(t, output_attend):
+    #first fixation before start trial
+    if t < (fixation_time/1000.0) + .002:
+        v = '0'
+    else: #then either word or zeros (mix of words?)
+        attn = vocab_attend.dot(output_attend) #dot product with current input (ie ITEM 1 or 2)
+        i = np.argmax(attn) #index of max
+
+        v = '0'
+
+        if attn[i] > 0.3: #if we really attend something
+            if i == 0: #first item
+                v = cur_item1
+            else:
+                v = cur_item2
+    return vocab_all_words.parse(v).v
 
 
 #get vector representing hand
@@ -519,6 +526,12 @@ def create_model(p):
                     #add node to plot total visual activity
                     model.visual_activation = nengo.Node(None,size_in=1)
                     nengo.Connection(model.vision_gabor.neurons, model.visual_activation,transform=np.ones((1,n_hid)), synapse = None)
+        else:
+            model.visual_net = nengo.Network()
+            with model.visual_net:
+                model.fake_vision = nengo.Node(fake_vision, size_in=D)
+            nengo.Connection(model.attend.output, model.fake_vision)
+                
 
 
         ### central cognition ###
@@ -531,7 +544,10 @@ def create_model(p):
                                                    wta_inhibit_scale=1, #was 1
                                                    #default_output_key='NONE', #what to say if input doesn't match
                                                    threshold=0.3)  # how strong does input need to be for it to recognize
-            nengo.Connection(model.visual_representation, model.concepts.input, transform=.8*vision_mapping) #not too fast to concepts, might have to be increased to have model react faster to first word.
+            if p.do_vision:
+                nengo.Connection(model.visual_representation, model.concepts.input, transform=.8*vision_mapping) #not too fast to concepts, might have to be increased to have model react faster to first word.
+            else:
+                nengo.Connection(model.fake_vision, model.concepts.input, transform=.8) #not too fast to concepts, might have to be increased to have model react faster to first word.
 
             #concepts accumulator
             with force_neurons_cfg:
@@ -550,6 +566,7 @@ def create_model(p):
             model.vis_pair = spa.State(D, vocab=vocab_all_words, feedback=1.0, feedback_synapse=.05) #was 2, 1.6 works ok, but everything gets activated.
 
         if p.do_familiarity:
+            assert p.do_concepts
                         ##### Familiarity #####
             # Assoc Mem with Learned Words
             # - familiarity signal should be continuous over all items, so no wta
