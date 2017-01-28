@@ -1,20 +1,12 @@
 #nengo
 import nengo
 import nengo.spa as spa
-from nengo_extras.vision import Gabor, Mask
 
 import pytry
 
-#other
 import numpy as np
-import inspect, os, sys, time, csv, random
-#import matplotlib.pyplot as plt
-import png ##pypng
+import os, sys, random, inspect
 import itertools
-import base64
-import PIL.Image
-import cStringIO
-import socket
 import warnings
 
 high_dims = False #use full dimensions or not
@@ -39,6 +31,10 @@ else: #lower dims
 #display stimuli in gui, works for 28x90 (two words) and 14x90 (one word)
 #t = time, x = vector of pixel values
 def display_func(t, x):
+    import png
+    import PIL.Image
+    import base64
+    import cStringIO
 
     #reshape etc
     if np.size(x) > 14*90:
@@ -67,50 +63,6 @@ def display_func(t, x):
                   xlink:href="data:image/png;base64,%s"
                   style="image-rendering: auto;">
            </svg>''' % (input_shape[2]*2, input_shape[1]*2, ''.join(img_str))
-
-
-# read in computer
-# add computer display
-r = png.Reader(cur_path + '/images/imac.png')
-r = r.asDirect()
-imac_img = np.vstack(itertools.imap(np.uint8, r[2]))
-
-def display_func_computer(t, x):
-    # reshape etc
-    if np.size(x) > 14 * 90:
-        input_shape = (1, 28, 90)
-    else:
-        input_shape = (1, 14, 90)
-
-    values = x.reshape(input_shape)  # back to 2d
-    values = values.transpose((1, 2, 0))
-    values = (values + 1) / 2 * 255.  # 0-255
-    values = values.astype('uint8')  # as ints
-
-    if values.shape[-1] == 1:
-        values = values[:, :, 0]
-
-        # add imac
-        imac = imac_img  # 512x512
-        imac[0:input_shape[1], 0:input_shape[2]] = values
-
-
-        # make png
-    # imac = imac.astype('uint8')
-    png_rep = PIL.Image.fromarray(imac)
-    buffer = cStringIO.StringIO()
-    png_rep.save(buffer, format="PNG")
-    img_str = base64.b64encode(buffer.getvalue())
-
-    # html for nengo
-    display_func_computer._nengo_html_ = '''
-           <svg width="100%%" height="100%%" viewbox="0 0 512 512">
-           <image width="100%%" height="100%%"
-                  xlink:href="data:image/png;base64,%s"
-                  style="image-rendering: auto;">
-           </svg>''' % (''.join(img_str))
-
-
 
 
 #load stimuli, subj=0 means a subset of the stims of subject 1 (no long words), works well with lower dims
@@ -255,6 +207,21 @@ def load_images():
     fixation_image = np.empty(shape=(1,90*14),dtype='float32')
     fixation_image[0] = image_2d.reshape(1, 90 * 14)
 
+def load_image_words():
+    global y_train_words
+    indir = cur_path + '/images/'
+    files = os.listdir(indir)
+    files2 = []
+
+    #select only images for current item set
+    for fn in files:
+        if fn[-4:] == '.png' and ((fn[:-4] in items)):
+             files2.append(fn)
+
+    y_train_words = [] #words represented in X_train
+    for i,fn in enumerate(files2):
+        y_train_words.append(fn[:-4]) #add word
+
 #returns pixels of image representing item (ie METAL)
 def get_image(item):
     if item != 'FIXATION':
@@ -268,14 +235,17 @@ def get_image(item):
 
 
 # performs all steps in model ini
-def initialize_model(subj=0,short=True):
+def initialize_model(subj=0, short=True, images=True):
 
     #warn when loading full stim set with low dimensions:
     if not(short) and not(high_dims):
         warn = warnings.warn('Initializing model with full stimulus set, but using low dimensions for vocabs.')
 
     load_stims(subj,short=short)
-    load_images()
+    if images:
+        load_images()
+    else:
+        load_image_words()
     initialize_vocabs()
 
 
@@ -474,6 +444,7 @@ def create_model(p):
             model.goal = spa.State(Dlow, vocab=vocab_goal, feedback=.7)  # current goal
 
         if p.do_vision:
+            from nengo_extras.vision import Gabor, Mask
 
 
             ### vision ###
@@ -536,34 +507,32 @@ def create_model(p):
 
         ### central cognition ###
 
-        if p.do_concepts:
+        ##### Concepts #####
+        model.concepts = spa.AssociativeMemory(vocab_all_words, #vocab_concepts,
+                                               wta_output=True,
+                                               wta_inhibit_scale=1, #was 1
+                                               #default_output_key='NONE', #what to say if input doesn't match
+                                               threshold=0.3)  # how strong does input need to be for it to recognize
+        if p.do_vision:
+            nengo.Connection(model.visual_representation, model.concepts.input, transform=.8*vision_mapping) #not too fast to concepts, might have to be increased to have model react faster to first word.
+        else:
+            nengo.Connection(model.fake_vision, model.concepts.input, transform=.8) #not too fast to concepts, might have to be increased to have model react faster to first word.
 
-            ##### Concepts #####
-            model.concepts = spa.AssociativeMemory(vocab_all_words, #vocab_concepts,
-                                                   wta_output=True,
-                                                   wta_inhibit_scale=1, #was 1
-                                                   #default_output_key='NONE', #what to say if input doesn't match
-                                                   threshold=0.3)  # how strong does input need to be for it to recognize
-            if p.do_vision:
-                nengo.Connection(model.visual_representation, model.concepts.input, transform=.8*vision_mapping) #not too fast to concepts, might have to be increased to have model react faster to first word.
-            else:
-                nengo.Connection(model.fake_vision, model.concepts.input, transform=.8) #not too fast to concepts, might have to be increased to have model react faster to first word.
+        #concepts accumulator
+        with force_neurons_cfg:
+            model.concepts_evidence = spa.State(1, feedback=1, feedback_synapse=0.005) #the lower the synapse, the faster it accumulates (was .1)
+        concepts_evidence_scale = 2.5
+        nengo.Connection(model.concepts.am.elem_output, model.concepts_evidence.input,
+                         transform=concepts_evidence_scale * np.ones((1, model.concepts.am.elem_output.size_out)),synapse=0.005)
 
-            #concepts accumulator
-            with force_neurons_cfg:
-                model.concepts_evidence = spa.State(1, feedback=1, feedback_synapse=0.005) #the lower the synapse, the faster it accumulates (was .1)
-            concepts_evidence_scale = 2.5
-            nengo.Connection(model.concepts.am.elem_output, model.concepts_evidence.input,
-                             transform=concepts_evidence_scale * np.ones((1, model.concepts.am.elem_output.size_out)),synapse=0.005)
+        #concepts switch
+        model.do_concepts = spa.AssociativeMemory(vocab_reset, default_output_key='CLEAR', threshold=.2)
+        nengo.Connection(model.do_concepts.am.ensembles[-1], model.concepts_evidence.all_ensembles[0].neurons,
+                         transform=np.ones((model.concepts_evidence.all_ensembles[0].n_neurons, 1)) * -10,
+                         synapse=0.005)
 
-            #concepts switch
-            model.do_concepts = spa.AssociativeMemory(vocab_reset, default_output_key='CLEAR', threshold=.2)
-            nengo.Connection(model.do_concepts.am.ensembles[-1], model.concepts_evidence.all_ensembles[0].neurons,
-                             transform=np.ones((model.concepts_evidence.all_ensembles[0].n_neurons, 1)) * -10,
-                             synapse=0.005)
-
-            ###### Visual Representation ######
-            model.vis_pair = spa.State(D, vocab=vocab_all_words, feedback=1.0, feedback_synapse=.05) #was 2, 1.6 works ok, but everything gets activated.
+        ###### Visual Representation ######
+        model.vis_pair = spa.State(D, vocab=vocab_all_words, feedback=1.0, feedback_synapse=.05) #was 2, 1.6 works ok, but everything gets activated.
 
         if p.do_familiarity:
             assert p.do_concepts
@@ -685,16 +654,14 @@ def create_model(p):
             #wait & start
             a_aa_wait =            'dot(goal,WAIT) - .9 --> goal=0',
             a_attend_item1    =    'dot(goal,DO_TASK) - .0 --> goal=RECOG, attend=ITEM1, do_concepts=GO',
-            )
-        if p.do_concepts:
-            actions.update(dict(
-                #attend words
-                b_attending_item1 =    'dot(goal,RECOG) + dot(attend,ITEM1) - concepts_evidence - .3 --> goal=RECOG, attend=ITEM1, do_concepts=GO', # vis_pair=2.5*(ITEM1*concepts)',
-                c_attend_item2    =    'dot(goal,RECOG) + dot(attend,ITEM1) + concepts_evidence - 1.6 --> goal=RECOG2, attend=ITEM2, vis_pair=3*(ITEM1*concepts)',
 
-                d_attending_item2 =    'dot(goal,RECOG2+RECOG) + dot(attend,ITEM2) - concepts_evidence - .4 --> goal=RECOG2, attend=ITEM2, do_concepts=GO',
-                e_start_familiarity =  'dot(goal,RECOG2) + dot(attend,ITEM2) + concepts_evidence - 1.8 --> goal=FAMILIARITY, vis_pair=1.9*(ITEM2*concepts)',
-                ))
+            #attend words
+            b_attending_item1 =    'dot(goal,RECOG) + dot(attend,ITEM1) - concepts_evidence - .3 --> goal=RECOG, attend=ITEM1, do_concepts=GO', # vis_pair=2.5*(ITEM1*concepts)',
+            c_attend_item2    =    'dot(goal,RECOG) + dot(attend,ITEM1) + concepts_evidence - 1.6 --> goal=RECOG2, attend=ITEM2, vis_pair=3*(ITEM1*concepts)',
+
+            d_attending_item2 =    'dot(goal,RECOG2+RECOG) + dot(attend,ITEM2) - concepts_evidence - .4 --> goal=RECOG2, attend=ITEM2, do_concepts=GO',
+            e_start_familiarity =  'dot(goal,RECOG2) + dot(attend,ITEM2) + concepts_evidence - 1.8 --> goal=FAMILIARITY, vis_pair=1.9*(ITEM2*concepts)',
+            )
         if p.do_familiarity:
             actions['d_attending_item2'] += ', dm_learned_words=1.0*(~ITEM1*vis_pair)'
             actions['e_start_familiarity'] += ', do_fam=GO, dm_learned_words=2.0*(~ITEM1*vis_pair+~ITEM2*vis_pair)'
@@ -738,6 +705,10 @@ def create_model(p):
         with force_neurons_cfg:
             model.thalamus = spa.Thalamus(model.bg)
 
+        model.p_bg_input = nengo.Probe(model.bg.input)
+        model.p_thal_output = nengo.Probe(model.thalamus.actions.output,
+                                          synapse=0.01)
+
 
         #probes
         if p.do_motor:
@@ -745,10 +716,10 @@ def create_model(p):
             model.pr_motor = nengo.Probe(model.fingers.output,synapse=.01)
         #model.pr_motor1 = nengo.Probe(model.motor.output, synapse=.01)
 
-        if not p.gui:
-            model.pr_vision_gabor = nengo.Probe(model.vision_gabor.neurons,synapse=.005) #do we need synapse, or should we do something with the spikes
-            model.pr_familiarity = nengo.Probe(model.dm_learned_words.am.elem_output,synapse=.01) #element output, don't include default
-            model.pr_concepts = nengo.Probe(model.concepts.am.elem_output, synapse=.01)  # element output, don't include default
+        #if not p.gui:
+        #    model.pr_vision_gabor = nengo.Probe(model.vision_gabor.neurons,synapse=.005) #do we need synapse, or should we do something with the spikes
+        #    model.pr_familiarity = nengo.Probe(model.dm_learned_words.am.elem_output,synapse=.01) #element output, don't include default
+        #    model.pr_concepts = nengo.Probe(model.concepts.am.elem_output, synapse=.01)  # element output, don't include default
 
         #multiply spikes with the connection weights
 
@@ -756,14 +727,6 @@ def create_model(p):
         #input
         model.input = spa.Input(goal=goal_func)
 
-
-
-        #print(sum(ens.n_neurons for ens in model.all_ensembles))
-
-        #return model
-        
-        #to show select BG rules
-        # get names rules
         if p.gui:
             vocab_actions = spa.Vocabulary(model.bg.output.size_out)
             for i, action in enumerate(model.bg.actions.actions):
@@ -775,8 +738,6 @@ def create_model(p):
             for net in model.networks:
                 if net.label is not None and net.label.startswith('channel'):
                     net.label = ''
-        
-        ### END MODEL
     return model
 
 
@@ -794,7 +755,6 @@ class AssocRecogTrial(pytry.NengoTrial):
         self.param('direct mode', direct=False)
         self.param('include detailed vision', do_vision=True)
         self.param('include detailed motor', do_motor=True)
-        self.param('perform concept recognition', do_concepts=True)
         self.param('perform familiarity', do_familiarity=True)
 
     def model(self, p):
@@ -827,10 +787,33 @@ class AssocRecogTrial(pytry.NengoTrial):
 
         cur_hand = 'RIGHT'
 
-        initialize_model(subj=0)
+        initialize_model(subj=0, images=p.do_vision)
 
         model = create_model(p)
+
+        for name, p in inspect.getmembers(model, lambda x: isinstance(x, nengo.Probe)):
+            setattr(self, name, p)
+
         return model
+
+    def evaluate(self, p, sim, plt):
+        T = 0.5
+        if p.do_familiarity:
+            T = 3.0
+        sim.run(T)
+
+        if plt is not None:
+            N = 2
+            plt.subplot(N,1,1)
+            plt.plot(sim.trange(), sim.data[self.p_bg_input])
+            plt.ylabel('bg input')
+            plt.subplot(N,1,2)
+            plt.plot(sim.trange(), sim.data[self.p_thal_output])
+            plt.ylabel('thal output')
+
+        return {}
+
+
 
 
 
