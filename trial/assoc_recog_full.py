@@ -9,21 +9,10 @@ import os, sys, random, inspect
 import itertools
 import warnings
 
-high_dims = False #use full dimensions or not
 verbose = True
 fixation_time = 200 #ms
 
 cur_path = '..'
-
-#set dimensions used by the model
-if high_dims:
-    D = 256 #for real words need at least 320, probably move op to 512 for full experiment. Not sure, 96 works fine for half. Maybe 128 for real?
-    Dmid = 128
-    Dlow = 48
-else: #lower dims
-    D = 256
-    Dmid = 48
-    Dlow = 48
 
 #### HELPER FUNCTIONS ####
 
@@ -236,22 +225,21 @@ def get_image(item):
 
 
 # performs all steps in model ini
-def initialize_model(subj=0, short=True, images=True):
-
+def initialize_model(p):
     #warn when loading full stim set with low dimensions:
-    if not(short) and not(high_dims):
+    if not(p.short) and not(high_dims):
         warn = warnings.warn('Initializing model with full stimulus set, but using low dimensions for vocabs.')
 
-    load_stims(subj,short=short)
-    if images:
+    load_stims(p.subj,short=p.short)
+    if p.do_vision:
         load_images()
     else:
         load_image_words()
-    initialize_vocabs()
+    initialize_vocabs(p)
 
 
 #initialize vocabs
-def initialize_vocabs():
+def initialize_vocabs(p):
 
     print('---- INITIALIZING VOCABS ----')
 
@@ -273,14 +261,14 @@ def initialize_vocabs():
 
 
     #low level visual representations
-    vocab_vision = nengo.spa.Vocabulary(Dmid,max_similarity=.25)
+    vocab_vision = nengo.spa.Vocabulary(p.Dmid,max_similarity=.25)
     for name in y_train_words:
         vocab_vision.parse(name)
     train_targets = vocab_vision.vectors
 
 
     #word concepts - has all concepts, including new foils, and pairs
-    vocab_concepts = spa.Vocabulary(D, max_similarity=0.1)
+    vocab_concepts = spa.Vocabulary(p.D, max_similarity=0.1)
     for i in y_train_words:
         vocab_concepts.parse(i)
     vocab_concepts.parse('ITEM1')
@@ -303,7 +291,7 @@ def initialize_vocabs():
 
 
     #vision-concept mapping between vectors
-    vision_mapping = np.zeros((D, Dmid))
+    vision_mapping = np.zeros((p.D, p.Dmid))
     for word in y_train_words:
         vision_mapping += np.outer(vocab_vision.parse(word).v, vocab_concepts.parse(word).v).T
 
@@ -321,21 +309,21 @@ def initialize_vocabs():
     #print target_words
 
     #motor vocabs, just for sim calcs
-    vocab_motor = spa.Vocabulary(Dmid) #different dimension to be sure, upper motor hierarchy
+    vocab_motor = spa.Vocabulary(p.Dmid) #different dimension to be sure, upper motor hierarchy
     vocab_motor.parse('LEFT+RIGHT+INDEX+MIDDLE')
 
-    vocab_fingers = spa.Vocabulary(Dlow) #direct finger activation
+    vocab_fingers = spa.Vocabulary(p.Dlow) #direct finger activation
     vocab_fingers.parse('L1+L2+R1+R2')
 
     #map higher and lower motor
-    motor_mapping = np.zeros((Dlow, Dmid))
+    motor_mapping = np.zeros((p.Dlow, p.Dmid))
     motor_mapping += np.outer(vocab_motor.parse('LEFT+INDEX').v, vocab_fingers.parse('L1').v).T
     motor_mapping += np.outer(vocab_motor.parse('LEFT+MIDDLE').v, vocab_fingers.parse('L2').v).T
     motor_mapping += np.outer(vocab_motor.parse('RIGHT+INDEX').v, vocab_fingers.parse('R1').v).T
     motor_mapping += np.outer(vocab_motor.parse('RIGHT+MIDDLE').v, vocab_fingers.parse('R2').v).T
 
     #goal vocab
-    vocab_goal = spa.Vocabulary(Dlow)
+    vocab_goal = spa.Vocabulary(p.Dlow)
     vocab_goal.parse('DO_TASK')
     vocab_goal.parse('RECOG')
     vocab_goal.parse('RECOG2')
@@ -347,7 +335,7 @@ def initialize_vocabs():
     vocab_attend = vocab_concepts.create_subset(['ITEM1', 'ITEM2'])
 
     #reset vocab
-    vocab_reset = spa.Vocabulary(Dlow)
+    vocab_reset = spa.Vocabulary(p.Dlow)
     vocab_reset.parse('CLEAR+GO')
 
 
@@ -438,11 +426,11 @@ def create_model(p):
         with model.control_net:
             #assuming the model knows which hand to use (which was blocked)
             model.hand_input = nengo.Node(get_hand)
-            model.target_hand = spa.State(Dmid, vocab=vocab_motor, feedback=1)
+            model.target_hand = spa.State(p.Dmid, vocab=vocab_motor, feedback=1)
             nengo.Connection(model.hand_input,model.target_hand.input,synapse=None)
 
-            model.attend = spa.State(D, vocab=vocab_attend, feedback=.5)  # vocab_attend
-            model.goal = spa.State(Dlow, vocab=vocab_goal, feedback=.7)  # current goal
+            model.attend = spa.State(p.D, vocab=vocab_attend, feedback=.5)  # vocab_attend
+            model.goal = spa.State(p.Dlow, vocab=vocab_goal, feedback=.7)  # current goal
 
         if p.do_vision:
             from nengo_extras.vision import Gabor, Mask
@@ -465,7 +453,7 @@ def create_model(p):
             with model.visual_net:
 
                 #represent currently attended item
-                model.attended_item = nengo.Node(present_item2,size_in=D)
+                model.attended_item = nengo.Node(present_item2,size_in=p.D)
                 nengo.Connection(model.attend.output, model.attended_item)
 
                 model.vision_gabor = nengo.Ensemble(n_hid, n_vis, eval_points=X_train,
@@ -483,7 +471,7 @@ def create_model(p):
                                  eval_points=np.vstack([X_train, zeros, np.random.randn(*X_train.shape)]),
                                  transform=.5)
 
-                model.visual_representation = nengo.Ensemble(n_hid, dimensions=Dmid)
+                model.visual_representation = nengo.Ensemble(n_hid, dimensions=p.Dmid)
 
                 model.visconn = nengo.Connection(model.vision_gabor, model.visual_representation, synapse=0.005, #was .005
                                                 eval_points=X_train, function=train_targets,
@@ -501,7 +489,7 @@ def create_model(p):
         else:
             model.visual_net = nengo.Network()
             with model.visual_net:
-                model.fake_vision = nengo.Node(fake_vision, size_in=D)
+                model.fake_vision = nengo.Node(fake_vision, size_in=p.D)
             nengo.Connection(model.attend.output, model.fake_vision)
 
 
@@ -533,7 +521,7 @@ def create_model(p):
                          synapse=0.005)
 
         ###### Visual Representation ######
-        model.vis_pair = spa.State(D, vocab=vocab_all_words, feedback=1.0, feedback_synapse=.05) #was 2, 1.6 works ok, but everything gets activated.
+        model.vis_pair = spa.State(p.D, vocab=vocab_all_words, feedback=1.0, feedback_synapse=.05) #was 2, 1.6 works ok, but everything gets activated.
 
         model.p_vis_pair = nengo.Probe(model.vis_pair.output, synapse=0.01)
 
@@ -582,7 +570,7 @@ def create_model(p):
 
                     #representation
             rep_scale = 0.5
-            model.representation = spa.State(D,vocab=vocab_all_words,feedback=1.0)
+            model.representation = spa.State(p.D,vocab=vocab_all_words,feedback=1.0)
             with force_neurons_cfg:
                 model.rep_filled = spa.State(1,feedback=.9,feedback_synapse=.1) #fb syn influences speed of acc
             model.do_rep = spa.AssociativeMemory(vocab_reset, default_output_key='CLEAR', threshold=.2)
@@ -591,12 +579,12 @@ def create_model(p):
                              synapse=0.005)
 
             nengo.Connection(model.representation.output, model.rep_filled.input,
-                            transform=rep_scale*np.reshape(sum(vocab_learned_pairs.vectors),((1,D))))
+                            transform=rep_scale*np.reshape(sum(vocab_learned_pairs.vectors),((1,p.D))))
 
 
             ###### Comparison #####
 
-            model.comparison = spa.Compare(D, vocab=vocab_all_words,neurons_per_multiply=500, input_magnitude=.3)
+            model.comparison = spa.Compare(p.D, vocab=vocab_all_words,neurons_per_multiply=500, input_magnitude=.3)
 
             #turns out comparison is not an accumulator - we also need one of those.
             with force_neurons_cfg:
@@ -630,10 +618,10 @@ def create_model(p):
             with model.motor_net:
 
                 #input multiplier
-                model.motor_input = spa.State(Dmid,vocab=vocab_motor)
+                model.motor_input = spa.State(p.Dmid,vocab=vocab_motor)
 
                 #higher motor area (SMA?)
-                model.motor = spa.State(Dmid, vocab=vocab_motor,feedback=.7)
+                model.motor = spa.State(p.Dmid, vocab=vocab_motor,feedback=.7)
 
                 #connect input multiplier with higher motor area
                 nengo.Connection(model.motor_input.output,model.motor.input,synapse=.1,transform=2)
@@ -759,6 +747,11 @@ class AssocRecogTrial(pytry.NengoTrial):
         self.param('include detailed vision', do_vision=True)
         self.param('include detailed motor', do_motor=True)
         self.param('perform familiarity', do_familiarity=True)
+        self.param('subject', subj=0)
+        self.param('short words', short=True)
+        self.param('dimensionality', D=256)
+        self.param('dimensionality of vision and motor maps', Dmid=48)
+        self.param('dimensionality of low-level reps', Dlow=48)
 
     def model(self, p):
         cur_item1 = 'CARGO'
@@ -790,7 +783,7 @@ class AssocRecogTrial(pytry.NengoTrial):
 
         cur_hand = 'RIGHT'
 
-        initialize_model(subj=0, images=p.do_vision)
+        initialize_model(p)
 
         model = create_model(p)
 
