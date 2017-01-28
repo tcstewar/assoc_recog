@@ -535,7 +535,7 @@ def create_model(p):
         model.vis_pair = spa.State(D, vocab=vocab_all_words, feedback=1.0, feedback_synapse=.05) #was 2, 1.6 works ok, but everything gets activated.
 
         if p.do_familiarity:
-            assert p.do_concepts
+            assert p.do_motor
                         ##### Familiarity #####
             # Assoc Mem with Learned Words
             # - familiarity signal should be continuous over all items, so no wta
