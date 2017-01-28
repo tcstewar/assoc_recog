@@ -803,10 +803,12 @@ class AssocRecogTrial(pytry.NengoTrial):
             plt.subplot(N,1,1)
             plt.plot(sim.trange(), sim.data[self.p_bg_input])
             plt.ylabel('bg input')
+            plt.ylim(0, 1.6)
 
             plt.subplot(N,1,2)
             plt.plot(sim.trange(), sim.data[self.p_thal_output])
             plt.ylabel('thal output')
+            plt.ylim(0, 1.0)
 
             plt.subplot(N, 1, 3)
             p1 = vocab_all_words.parse('%s*ITEM1' % cur_item1).v
@@ -816,6 +818,8 @@ class AssocRecogTrial(pytry.NengoTrial):
             plt.plot(sim.trange(), np.dot(data, p2), label=cur_item2)
             plt.legend(loc='best')
             plt.ylabel('vis_pair')
+            plt.ylim(-0.2, 1.4)
+            plt.text(0, 0, 'do_vision=%s' % p.do_vision)
 
 
         return {}
