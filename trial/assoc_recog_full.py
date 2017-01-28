@@ -505,7 +505,9 @@ def create_model(p):
         if p.do_vision:
             nengo.Connection(model.visual_representation, model.concepts.input, transform=.8*vision_mapping) #not too fast to concepts, might have to be increased to have model react faster to first word.
         else:
-            nengo.Connection(model.fake_vision, model.concepts.input, transform=.8) #not too fast to concepts, might have to be increased to have model react faster to first word.
+            nengo.Connection(model.fake_vision, model.concepts.input,
+                             transform=.8,
+                             synapse=0.025)
 
         #concepts accumulator
         with force_neurons_cfg:
