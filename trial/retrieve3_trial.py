@@ -8,10 +8,10 @@ class FinishedException(nengo.exceptions.NengoException):
 
 class Retrieve2Trial(pytry.NengoTrial):
     def params(self):
-        self.param('dimensions', D=32)
-        self.param('memory size', M=2)
+        self.param('dimensions', D=48)
+        self.param('memory size', M=32)
         self.param('recall timeout', timeout=5)
-        self.param('minimum time', min_time=0.05)
+        self.param('minimum time', min_time=0.01)
         self.param('synapse', syn=0.1)
 
     def model(self, p):
