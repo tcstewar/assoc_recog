@@ -14,6 +14,9 @@ class Retrieve4Trial(pytry.NengoTrial):
         self.param('minimum time', min_time=0.01)
         self.param('synapse', syn=0.1)
         self.param('input synapse', input_syn=0.005)
+        self.param('noise', noise=0.0)
+        self.param('zero time', t_zero=0.05)
+        self.param('common', common=0.0)
 
     def model(self, p):
         vocab = spa.Vocabulary(p.D)
@@ -23,14 +26,14 @@ class Retrieve4Trial(pytry.NengoTrial):
 
         for i in range(p.M / 6):
             for j in range(3):
-                pp = vocab.parse('X%d+Y%d' % (6*i+j, 6*i+j))
+                pp = vocab.parse('X%d+Y%d+%g*Q' % (6*i+j, 6*i+j, p.common))
                 pp.normalize()
                 vocab.add('P%d' % (3*i+j), pp)
                 items.append(pp.v)
                 fan.append(1)
 
             for j, v in enumerate(['AB', 'CB', 'AC']):
-                pp = vocab.parse('%s%d+%s%d' % (v[0], i, v[1], i))
+                pp = vocab.parse('%s%d+%s%d+%g*Q' % (v[0], i, v[1], i, p.common))
                 pp.normalize()
                 vocab.add('P%d_2' % (3*i+j), pp)
                 items.append(pp.v)
@@ -47,6 +50,9 @@ class Retrieve4Trial(pytry.NengoTrial):
         with model:
 
             model.cue = spa.State(p.D, vocab=vocab)
+            if p.noise > 0:
+                for ens in model.cue.all_ensembles:
+                    ens.noise = nengo.processes.WhiteNoise(dist=nengo.dists.Gaussian(0, std=p.noise))
 
             model.mem = nengo.networks.EnsembleArray(n_neurons=50, n_ensembles=len(items))
             for ens in model.mem.all_ensembles:
@@ -74,11 +80,13 @@ class Retrieve4Trial(pytry.NengoTrial):
                 self.index = 0
                 self.switch_time = 0
                 self.times = []
+                self.correct = []
                 super(Env, self).__init__(self.func, size_in=len(items), size_out=p.D)
             def func(self, t, x):
-                if t > self.switch_time + p.min_time:
+                if t > self.switch_time + p.min_time + p.t_zero:
                     values = list(sorted(x))
                     if values[-2]<1e-3 or t > (self.switch_time + p.timeout):
+                        self.correct.append(np.argmax(x) == self.index)
                         self.index = (self.index + 1) % len(self.items)
                         self.times.append(t - self.switch_time)
                         self.switch_time = t
@@ -86,7 +94,10 @@ class Retrieve4Trial(pytry.NengoTrial):
                 if len(self.times) >= len(self.items) and not p.gui:
                     raise FinishedException()
 
-                return self.items[self.index]
+                if t < self.switch_time + p.t_zero:
+                    return np.zeros(p.D)
+                else:
+                    return self.items[self.index]
 
         with model:
             self.env = Env(items)
@@ -104,7 +115,8 @@ class Retrieve4Trial(pytry.NengoTrial):
 
         mean_times = {1: [], 2: []}
         for i, f in enumerate(self.fan):
-            mean_times[f].append(self.env.times[i])
+            if self.env.correct[i]:
+                mean_times[f].append(self.env.times[i])
         for k, v in mean_times.items():
             mean_times[k] = np.mean(v)
 
@@ -113,7 +125,8 @@ class Retrieve4Trial(pytry.NengoTrial):
 
 
         return dict(times=self.env.times, fan=self.fan,
-                    mean_times=mean_times)
+                    mean_times=mean_times,
+                    correct=self.env.correct)
 
 
 
